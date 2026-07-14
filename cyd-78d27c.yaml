@@ -556,7 +556,7 @@ font:
   - file: "gfonts://Roboto"
     id: value_font
     size: 65
-    glyphs: "0123456789.: -AMPWkV%"  # digits, decimal, colon+space for time, negative, AM/PM, W/kW, VA/kVA, %
+    glyphs: "0123456789.:-AMPWkV%"  # digits, decimal, colon, negative, AM/PM, W/kW, VA/kVA, %
 
   - file: "gfonts://Roboto"
     id: label_font
@@ -1517,7 +1517,7 @@ text:
 #   Icon: align=CENTER x=−120 (page centre x≈40).
 #   Content: align=CENTER x=+35 (page centre x=195); title y=−30, value y=+7.
 #   Units embedded in value strings — no separate unit label.
-#   DC page exceptions: Row 2 container height=240 (battery icon backdrop), Row 3 container x=+45 (no icon).
+#   DC page exceptions: Row 2 container height=240 (battery icon backdrop), Row 3 container x=+31 (no icon).
 lvgl:
   displays:
     - lcd_display
@@ -1725,7 +1725,7 @@ lvgl:
                   text_font: icon_font
                   text_color: 0xFFFF00
                   align: CENTER
-                  x: -120
+                  x: -130
               - label:
                   id: icon_solar_moon
                   text: "\uf174"
@@ -1787,7 +1787,7 @@ lvgl:
                   y: 12
 
         # ── Row 3: Battery Power / Time estimate (bottom, y=160–240) ─
-        # Container has x=+45 offset (aligns content under val_battery above; no icon in this row).
+        # Container has x=+31 offset (aligns content under val_battery above; no icon in this row).
         # Title and value both centered within container — content changes with batt_slot cycling.
         - obj:
             width: 320
