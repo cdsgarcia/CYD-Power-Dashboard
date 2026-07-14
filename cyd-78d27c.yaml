@@ -1,0 +1,1970 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# cyd-78d27c.yaml — ESPHome config for CYD ESP32 (ILI9341 240×320)
+#
+# 3-Screen rotating dashboard (landscape 320×240 via LVGL 270° rotation):
+#   Screen 0 — Analog Clock          (full-screen, no digital time)
+#   Screen 1 — DC Page               (PV Power / Battery SOC / Battery Power+Time)
+#   Screen 2 — AC Page               (Apparent Power / Ecoflow / A/C 1F↔2F cycling)
+#
+# All screens rotate automatically; transition interval is HA-configurable (1–30 s).
+# Daily device restart at a configurable PHT hour (default 3 AM).
+# Screens 1 & 2 have three vertically-stacked rows (320×80 each).
+#
+# ▸ Flash:    esphome run cyd-78d27c.yaml
+# ▸ OTA:      esphome upload cyd-78d27c.yaml
+# ▸ Validate: esphome config cyd-78d27c.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+substitutions:
+  name: cyd-78d27c
+  friendly_name: CYD 78d27c
+  # ── Power-flow sensor entity IDs ─────────────────────────────
+  solar_entity:                "sensor.srne_pv_power"
+  load2_entity:                "sensor.a_c_1f_power_meter_power"
+  load3_entity:                "sensor.a_c_3f_power_meter_power"
+  load1_entity:                "sensor.ef_r30241_ac_input_power"
+  battery_entity:              "sensor.battery_soc_mean"
+  home_entity:                 "sensor.srne_load_l1_apparent_power"
+  battery_power_entity:        "sensor.total_battery_power"
+  batt_current_entity:         "sensor.total_battery_current"
+  srne_charge_limit_entity:    "number.srne_batttery_charge_limit"
+  srne_discharge_limit_entity: "number.srne_batttery_discharge_limit"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  on_boot:
+    priority: -10
+    then:
+      - light.turn_on:
+          id: backlight
+          brightness: !lambda 'return id(display_brightness).state / 100.0f;'
+      - lambda: |-
+          id(g_lvgl_ready) = true;
+          id(g_screen_secs) = (int)id(screen_transition_secs).state;
+          id(g_slot_secs) = (int)id(slot_cycle_secs).state;
+          id(update_batt_display).execute();
+          id(update_ac_slot_display).execute();
+          id(update_batt_icon_state).execute();
+          id(update_solar_icon_state).execute();
+
+esp32:
+  board: esp32dev
+  variant: esp32
+  framework:
+    type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.1"
+      sram1_as_iram: true
+
+# ── Logging ───────────────────────────────────────────────────
+logger:
+  level: WARN
+
+# ── Home Assistant API ────────────────────────────────────────
+api:
+
+# ── OTA ───────────────────────────────────────────────────────
+ota:
+  - platform: esphome
+
+# ── WiFi ──────────────────────────────────────────────────────
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+    - ssid: !secret wifi_ssid2
+      password: !secret wifi_password2
+  power_save_mode: none
+  ap:
+    ssid: "cyd-78d27c"
+    password: "cyd-78d27c"
+  reboot_timeout: 0s
+
+captive_portal:
+
+# ── Globals ───────────────────────────────────────────────────
+# Screen cycling:     g_screen_idx / g_screen_secs
+# Slot cycling timer: g_slot_secs (shared: DC batt slot + AC A/C slot)
+# DC battery slot:    g_batt_slot / g_batt_power_val / g_batt_soc_val /
+#                     g_batt_current_val / g_srne_charge_limit_val / g_srne_discharge_limit_val
+# AC cycling slot:    g_ac_slot_idx / g_load1_val / g_load2_val / g_load3_val
+# Battery icon anim:  g_batt_anim_state / g_batt_anim_step
+# Solar icon anim:    g_solar_val / g_solar_anim_state / g_solar_anim_step
+globals:
+  - id: g_lvgl_ready
+    type: bool
+    initial_value: 'false'
+    restore_value: false
+
+  # ── Screen cycling ──────────────────────────────────────────
+  - id: g_screen_idx    # 0=clock  1=DC  2=AC
+    type: int
+    initial_value: '0'
+    restore_value: false
+  - id: g_screen_secs   # countdown to next screen transition (seconds)
+    type: int
+    initial_value: '10'  # fallback — on_boot applies NVS-restored screen_transition_secs
+    restore_value: false
+
+  # ── Shared slot cycling timer ───────────────────────────────
+  - id: g_slot_secs
+    type: int
+    initial_value: '2'  # fallback — on_boot applies NVS-restored slot_cycle_secs
+    restore_value: false
+
+  # ── DC page: Battery Power slot ─────────────────────────────
+  - id: g_batt_slot     # 0=Battery Power W   1=Estimated charge/discharge time
+    type: int
+    initial_value: '0'
+    restore_value: false
+  - id: g_batt_power_val
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: g_batt_soc_val
+    type: float
+    restore_value: false
+    initial_value: '50'
+  - id: g_batt_current_val
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: g_srne_charge_limit_val
+    type: float
+    restore_value: false
+    initial_value: '100'
+  - id: g_srne_discharge_limit_val
+    type: float
+    restore_value: false
+    initial_value: '20'
+
+  # ── Battery SOC icon animation ──────────────────────────────
+  - id: g_batt_anim_state  # 0=static  1=charging  2=discharging  3=alert
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: g_batt_anim_step   # current glyph index (0=battery_full … 6=battery_0_bar)
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+  # ── Solar icon animation ────────────────────────────────────
+  - id: g_solar_val
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: g_solar_anim_state  # 0=static(cloudy)  1=sun cycle  2=moon cycle
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: g_solar_anim_step
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+  # ── AC page: cycling A/C slot ───────────────────────────────
+  - id: g_ac_slot_idx   # 0=A/C 1F (load2)   1=A/C 2F (load3)
+    type: int
+    initial_value: '0'
+    restore_value: false
+  - id: g_load1_val     # cached ${load1_entity} (Ecoflow)
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: g_load2_val     # cached ${load2_entity} (A/C 1F)
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: g_load3_val     # cached ${load3_entity} (A/C 2F)
+    type: float
+    restore_value: false
+    initial_value: '0'
+
+  # ── Apparent power cache (used by layout_preview on_turn_off) ─
+  - id: g_home_val
+    type: float
+    restore_value: false
+    initial_value: '0'
+
+  # ── Layout preview mode — blocks all live LVGL label updates ──
+  - id: g_demo_mode
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+script:
+  # ── Battery Power/Time Slot Display (DC page row 3) ──────────
+  # Slot 0: Battery Power (W / kW).
+  # Slot 1: Estimated charge/discharge time — only when within batt_time_threshold_hrs.
+  # Falls back to slot 0 if not eligible, time not valid, or batt_time_enabled=OFF.
+  # Publishes 6 HA sensors (throttled 60s): hours/minutes-since-midnight/text for full+empty.
+  - id: update_batt_display
+    then:
+      - lambda: |-
+          if (!id(g_lvgl_ready)) return;
+          if (id(g_demo_mode)) return;
+          static bool _first_pub = true;
+          static uint32_t _last_pub_ms = 0;
+          bool _do_pub = _first_pub || (millis() - _last_pub_ms >= 60000UL);
+          if (_do_pub) { _first_pub = false; _last_pub_ms = millis(); }
+          float v = id(g_batt_power_val);
+          if (id(g_batt_slot) == 1) {
+            // ── Slot 1: Estimated Charge/Discharge Time ────────
+            float soc     = id(g_batt_soc_val);
+            float current = id(g_batt_current_val);
+            float cap     = id(battery_capacity_ah).state;
+            float clim    = id(g_srne_charge_limit_val);
+            float dlim    = id(g_srne_discharge_limit_val);
+            float thr     = id(batt_time_threshold_hrs).state;
+            bool charging    = current > 0.5f;
+            bool discharging = current < -0.5f;
+            float hours   = 0;
+            bool is_charge = false;
+            bool eligible  = false;
+            if (charging && clim > soc) {
+              hours     = ((clim - soc) / 100.0f * cap) / current;
+              is_charge = true;
+              eligible  = hours < thr;
+            } else if (discharging && soc > dlim) {
+              hours     = ((soc - dlim) / 100.0f * cap) / (-current);
+              is_charge = false;
+              eligible  = hours < thr;
+            }
+            if (eligible) {
+              auto now = id(ha_time).now();
+              if (now.is_valid()) {
+                time_t pht = now.timestamp + (8 * 3600);
+                struct tm pht_tm; gmtime_r(&pht, &pht_tm);
+                int total_min = (int)(hours * 60.0f + 0.5f);
+                int tgt_min   = pht_tm.tm_min + (total_min % 60);
+                int carry     = tgt_min / 60;
+                tgt_min      %= 60;
+                int tgt_hr    = pht_tm.tm_hour + (total_min / 60) + carry;
+                int days      = tgt_hr / 24;
+                tgt_hr       %= 24;
+                const char* am_pm = (tgt_hr < 12) ? "AM" : "PM";
+                int h12 = tgt_hr % 12;
+                if (h12 == 0) h12 = 12;
+                lv_color_t clr;
+                if (is_charge) {
+                  if      (hours < 2) clr = lv_color_hex(0x00FF00);
+                  else if (hours < 4) clr = lv_color_hex(0x0096FF);
+                  else if (hours < 6) clr = lv_color_hex(0xFFFF00);
+                  else                clr = lv_color_hex(0xFFA500);
+                } else {
+                  if      (hours < 3) clr = lv_color_hex(0xFFA500);
+                  else if (hours < 6) clr = lv_color_hex(0xFFFF00);
+                  else if (hours < 9) clr = lv_color_hex(0x0096FF);
+                  else                clr = lv_color_hex(0x00FF00);
+                }
+                int limit_pct = (int)(is_charge ? clim : dlim);
+                char action[28];
+                snprintf(action, sizeof(action), is_charge ? "Charges to %d%% at" : "Empty to %d%% at", limit_pct);
+                char tbuf[48];
+                if      (days == 0) snprintf(tbuf, sizeof(tbuf), "%s", action);
+                else if (days == 1) snprintf(tbuf, sizeof(tbuf), "%s - Next Day", action);
+                else                snprintf(tbuf, sizeof(tbuf), "%s - Next %d Days", action, days);
+                lv_label_set_text(id(lbl_batt_title), tbuf);
+                char buf[12];
+                snprintf(buf, sizeof(buf), "%d:%02d%s", h12, tgt_min, am_pm);
+                if (id(batt_log_enabled).state)
+                  ESP_LOGW("batt", "Battery %s at %s (%s, %.1fh, SOC %.0f%% → %.0f%%)",
+                    is_charge ? "full" : "empty", buf, tbuf, hours,
+                    id(g_batt_soc_val),
+                    is_charge ? id(g_srne_charge_limit_val) : id(g_srne_discharge_limit_val));
+                lv_label_set_text(id(val_battery_power), buf);
+                lv_obj_set_style_text_color(id(val_battery_power), clr, 0);
+                if (_do_pub) {
+                  int min_of_day = tgt_hr * 60 + tgt_min;
+                  id(batt_hours_to_full).publish_state(is_charge ? hours : 0.0f);
+                  id(batt_hours_to_empty).publish_state(!is_charge ? hours : 0.0f);
+                  id(batt_full_at_min).publish_state(is_charge ? (float)min_of_day : 0.0f);
+                  id(batt_empty_at_min).publish_state(!is_charge ? (float)min_of_day : 0.0f);
+                  id(batt_full_at_time).publish_state(is_charge ? std::string(buf) : std::string("Not Charging"));
+                  id(batt_empty_at_time).publish_state(!is_charge ? std::string(buf) : std::string("Not Discharging"));
+                }
+                return;
+              }
+              if (id(batt_log_enabled).state)
+                ESP_LOGW("batt", "update_batt_display slot1: time not valid, showing Power W");
+              id(g_batt_slot) = 0;
+            } else {
+              if (id(batt_log_enabled).state)
+                ESP_LOGW("batt", "update_batt_display slot1 fallback: cur=%.1fA SOC=%.0f%% clim=%.0f%% dlim=%.0f%% hours=%.1f thr=%.0fh",
+                  current, soc, clim, dlim, hours, thr);
+              id(g_batt_slot) = 0;
+            }
+          }
+          // ── Slot 0 (or slot 1 fallback): Battery Power ─────────────
+          lv_label_set_text_static(id(lbl_batt_title), "Battery Power");
+          char buf[16];
+          if      (v >= 1000 || v <= -1000) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
+          else if (v >= 100  || v <= -100)  snprintf(buf, sizeof(buf), "%.0fW", v);
+          else if (v >= 10   || v <= -10)   snprintf(buf, sizeof(buf), "%.1fW", v);
+          else                              snprintf(buf, sizeof(buf), "%.2fW", v);
+          lv_label_set_text(id(val_battery_power), buf);
+          lv_color_t clr;
+          if      (v >= 2500) clr = lv_color_hex(0x00FF00);
+          else if (v >= 500)  clr = lv_color_hex(0x0096FF);
+          else if (v >= 0)    clr = lv_color_hex(0xFFFF00);
+          else                clr = lv_color_hex(0xFFA500);
+          lv_obj_set_style_text_color(id(val_battery_power), clr, 0);
+          if (_do_pub) {
+            float _soc  = id(g_batt_soc_val);
+            float _cur  = id(g_batt_current_val);
+            float _cap  = id(battery_capacity_ah).state;
+            float _clim = id(g_srne_charge_limit_val);
+            float _dlim = id(g_srne_discharge_limit_val);
+            float _thr  = id(batt_time_threshold_hrs).state;
+            bool _chg = (_cur > 0.5f && _clim > _soc);
+            bool _dis = (_cur < -0.5f && _soc > _dlim);
+            float _hours = 0.0f;
+            bool _is_charge = false, _eligible = false;
+            if (_chg) {
+              _hours = ((_clim - _soc) / 100.0f * _cap) / _cur;
+              _is_charge = true; _eligible = (_hours < _thr);
+            } else if (_dis) {
+              _hours = ((_soc - _dlim) / 100.0f * _cap) / (-_cur);
+              _eligible = (_hours < _thr);
+            }
+            if (_eligible && id(batt_time_enabled).state) {
+              auto _now = id(ha_time).now();
+              if (_now.is_valid()) {
+                time_t _pht = _now.timestamp + (8 * 3600);
+                struct tm _tm; gmtime_r(&_pht, &_tm);
+                int _total_min = (int)(_hours * 60.0f + 0.5f);
+                int _tgt_min = _tm.tm_min + (_total_min % 60);
+                int _carry = _tgt_min / 60; _tgt_min %= 60;
+                int _tgt_hr = _tm.tm_hour + (_total_min / 60) + _carry; _tgt_hr %= 24;
+                const char* _ap = (_tgt_hr < 12) ? "AM" : "PM";
+                int _h12 = _tgt_hr % 12; if (_h12 == 0) _h12 = 12;
+                int _mod = _tgt_hr * 60 + _tgt_min;
+                char _tbuf[12]; snprintf(_tbuf, sizeof(_tbuf), "%d:%02d%s", _h12, _tgt_min, _ap);
+                id(batt_hours_to_full).publish_state(_is_charge ? _hours : 0.0f);
+                id(batt_hours_to_empty).publish_state(!_is_charge ? _hours : 0.0f);
+                id(batt_full_at_min).publish_state(_is_charge ? (float)_mod : 0.0f);
+                id(batt_empty_at_min).publish_state(!_is_charge ? (float)_mod : 0.0f);
+                id(batt_full_at_time).publish_state(_is_charge ? std::string(_tbuf) : std::string("Not Charging"));
+                id(batt_empty_at_time).publish_state(!_is_charge ? std::string(_tbuf) : std::string("Not Discharging"));
+                return;
+              }
+            }
+            id(batt_hours_to_full).publish_state(0.0f);
+            id(batt_hours_to_empty).publish_state(0.0f);
+            id(batt_full_at_min).publish_state(0.0f);
+            id(batt_empty_at_min).publish_state(0.0f);
+            id(batt_full_at_time).publish_state(
+              (_soc >= _clim) ? std::string("Full") :
+              _chg ? std::string("Charging") : std::string("Not Charging"));
+            id(batt_empty_at_time).publish_state(
+              (_soc <= _dlim) ? std::string("At Limit") :
+              _dis ? std::string("Discharging") : std::string("Not Discharging"));
+          }
+
+  # ── Battery Slot Advance ─────────────────────────────────────
+  # Toggles g_batt_slot 0↔1 with eligibility check for slot 1.
+  - id: advance_batt_slot
+    then:
+      - lambda: |-
+          int next = 1 - id(g_batt_slot);
+          float soc     = id(g_batt_soc_val);
+          float current = id(g_batt_current_val);
+          float cap     = id(battery_capacity_ah).state;
+          float clim    = id(g_srne_charge_limit_val);
+          float dlim    = id(g_srne_discharge_limit_val);
+          float thr     = id(batt_time_threshold_hrs).state;
+          float hours   = -1;
+          bool eligible = false;
+          if (next == 1) {
+            if (!id(batt_time_enabled).state) {
+              next = 0;
+            } else if (current > 0.5f && clim > soc) {
+              hours    = ((clim - soc) / 100.0f * cap) / current;
+              eligible = hours < thr;
+              if (!eligible) next = 0;
+            } else if (current < -0.5f && soc > dlim) {
+              hours    = ((soc - dlim) / 100.0f * cap) / (-current);
+              eligible = hours < thr;
+              if (!eligible) next = 0;
+            } else {
+              next = 0;
+            }
+          }
+          if (id(batt_log_enabled).state) {
+            if (!id(batt_time_enabled).state)
+              ESP_LOGW("batt", "advance_batt_slot: disabled — staying at slot 0 (Power W)");
+            else if (next == 0 && id(g_batt_slot) == 1)
+              ESP_LOGW("batt", "advance_batt_slot: slot1→0 (back to Power W)");
+            else
+              ESP_LOGW("batt", "advance_batt_slot: cur=%.1fA SOC=%.0f%% clim=%.0f%% dlim=%.0f%% cap=%.0fAh thr=%.0fh → hours=%.1f eligible=%d next_slot=%d",
+                current, soc, clim, dlim, cap, thr, hours, (int)eligible, next);
+          }
+          id(g_batt_slot) = next;
+          id(update_batt_display).execute();
+
+  # ── AC Page Slot Display (row 3: A/C 1F ↔ A/C 2F) ────────────
+  # Cycling between load2 (A/C 1F) and load3 (A/C 2F).
+  - id: update_ac_slot_display
+    then:
+      - lambda: |-
+          if (!id(g_lvgl_ready)) return;
+          if (id(g_demo_mode)) return;
+          float v = (id(g_ac_slot_idx) == 0) ? id(g_load2_val) : id(g_load3_val);
+          const char* lbl = (id(g_ac_slot_idx) == 0) ?
+            id(load2_label).state.c_str() :
+            id(load3_label).state.c_str();
+          lv_label_set_text(id(lbl_ac_slot), lbl);
+          lv_color_t clr = (v <= 0)   ? lv_color_hex(0xFFFF00) :
+                           (v < 700)  ? lv_color_hex(0x00FF00) :
+                           (v < 1000) ? lv_color_hex(0x0096FF) :
+                           (v < 1200) ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
+          lv_obj_set_style_text_color(id(icon_ac_slot), clr, 0);
+          lv_obj_set_style_text_color(id(val_ac_slot), clr, 0);
+          char buf[16];
+          if      (v >= 1000) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
+          else if (v >= 100)  snprintf(buf, sizeof(buf), "%.0fW", v);
+          else if (v >= 10)   snprintf(buf, sizeof(buf), "%.1fW", v);
+          else                snprintf(buf, sizeof(buf), "%.2fW", v);
+          lv_label_set_text(id(val_ac_slot), buf);
+
+  # ── AC Slot Advance ────────────────────────────────────────────
+  # Skips A/C 1F (load2) or A/C 2F (load3) if power is at or below their threshold.
+  # Both slots are skipped only if both are below threshold — never leaves display empty
+  # because update_ac_slot_display handles v=0 gracefully (shows "0.00W").
+  - id: advance_ac_slot
+    then:
+      - lambda: |-
+          int next = 1 - id(g_ac_slot_idx);  // toggle 0↔1
+          for (int i = 0; i < 2; i++) {
+            int c = (next + i) % 2;
+            bool ok = (c == 0 && id(g_load2_val) > id(load2_threshold).state) ||
+                      (c == 1 && id(g_load3_val) > id(load3_threshold).state);
+            if (ok) { id(g_ac_slot_idx) = c; id(update_ac_slot_display).execute(); return; }
+          }
+          // Both below threshold — keep current slot, just refresh display
+          id(update_ac_slot_display).execute();
+
+  # ── Solar Icon Animation State ──────────────────────────────
+  # State 0: daytime no production → wb_cloudy, grey, static
+  # State 1: producing             → sun ping-pong, yellow
+  # State 2: night no production   → moon cycle, blue
+  - id: update_solar_icon_state
+    then:
+      - lambda: |-
+          if (!id(g_lvgl_ready)) return;
+          if (id(g_demo_mode)) return;
+
+          bool is_night = false;
+          int dbg_hour = -1;
+          bool time_valid = false;
+          auto now_t = id(ha_time).now();
+          if (now_t.is_valid()) {
+            time_valid = true;
+            time_t pht = now_t.timestamp + (8 * 3600);
+            struct tm t; gmtime_r(&pht, &t);
+            dbg_hour = t.tm_hour;
+            is_night = (t.tm_hour >= 18 || t.tm_hour < 6);
+          }
+
+          float solar_w = id(g_solar_val);
+          int new_state = (solar_w > 0.0f) ? 1 :
+                          is_night          ? 2 :
+                                             0;
+
+          int prev_state = id(g_solar_anim_state);
+          id(g_solar_anim_state) = new_state;
+          if (new_state != prev_state)
+            id(g_solar_anim_step) = 0;
+
+          if (id(solar_log_enabled).state)
+            ESP_LOGW("solar", "solar_icon: solar=%.0fW time_valid=%d PHT_hr=%d is_night=%d prev=%d → new=%d screen=%d",
+              solar_w, (int)time_valid, dbg_hour, (int)is_night, prev_state, new_state, id(g_screen_idx));
+
+          if (new_state == 2) {
+            lv_obj_add_flag(id(icon_solar), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(icon_solar_moon), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_clear_flag(id(icon_solar), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(icon_solar_moon), LV_OBJ_FLAG_HIDDEN);
+          }
+
+          if (new_state != prev_state || new_state == 0) {
+            if (new_state == 0) {
+              lv_label_set_text_static(id(icon_solar), "\ue42d");
+              lv_obj_set_style_text_color(id(icon_solar), lv_color_hex(0x888888), 0);
+            } else if (new_state == 1) {
+              lv_label_set_text_static(id(icon_solar), "\uec0f");
+              lv_obj_set_style_text_color(id(icon_solar), lv_color_hex(0xFFFF00), 0);
+            } else {
+              lv_label_set_text_static(id(icon_solar_moon), "\uf174");
+              lv_obj_set_style_text_color(id(icon_solar_moon), lv_color_hex(0x0096FF), 0);
+            }
+          }
+
+  # ── Battery SOC Icon Animation State ────────────────────────
+  # Priority: SOC <10% → alert flash | discharging → step down | charging → step up | idle → static
+  - id: update_batt_icon_state
+    then:
+      - lambda: |-
+          if (!id(g_lvgl_ready)) return;
+          if (id(g_demo_mode)) return;
+          float soc = id(g_batt_soc_val);
+          float cur = id(g_batt_current_val);
+
+          int new_state;
+          if      (soc < 10.0f) new_state = 3;
+          else if (cur < -0.5f)  new_state = 2;
+          else if (cur >  0.5f)  new_state = 1;
+          else                   new_state = 0;
+
+          int start = (soc >= 98) ? 0 : (soc >= 85) ? 1 : (soc >= 70) ? 2 :
+                      (soc >= 55) ? 3 : (soc >= 40) ? 4 : (soc >= 25) ? 5 : 6;
+
+          id(g_batt_anim_step)  = start;
+          id(g_batt_anim_state) = new_state;
+
+          if (new_state == 0) {
+            static const char* const GLYPHS[] = {
+              "\ue1a4", "\uebd4", "\uebe2", "\uebdd",
+              "\uebe0", "\uebd9", "\uebdc", "\ue19c"
+            };
+            static const uint32_t COLORS[] = {
+              0x00FF00, 0x00FF00, 0x0096FF, 0x0096FF,
+              0xFFFF00, 0xFFFF00, 0xFFA500, 0xFFA500
+            };
+            int idx = start;
+            lv_obj_set_style_opa(id(icon_battery), LV_OPA_COVER, 0);
+            lv_label_set_text_static(id(icon_battery), GLYPHS[idx]);
+            lv_obj_set_style_text_color(id(icon_battery), lv_color_hex(COLORS[idx]), 0);
+          }
+
+# ── Buttons ───────────────────────────────────────────────────
+button:
+  - platform: safe_mode
+    id: button_safe_mode
+    name: Safe Mode Boot
+    entity_category: config
+
+  - platform: factory_reset
+    id: factory_reset_btn
+    name: Factory Reset
+    entity_category: config
+
+# ── Fonts ─────────────────────────────────────────────────────
+font:
+  - file: "gfonts://Roboto"
+    id: value_font
+    size: 65
+    glyphs: "0123456789.: -AMPWkV%"  # digits, decimal, colon+space for time, negative, AM/PM, W/kW, VA/kVA, %
+
+  - file: "gfonts://Roboto"
+    id: label_font
+    size: 12
+    glyphs: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz .%/+-"
+
+  - file: "gfonts://Roboto"
+    id: clock_num_font
+    size: 30
+    glyphs: "12369"
+
+  - file: "gfonts://Material Icons"
+    id: icon_font
+    size: 80
+    glyphs: [
+      "\uec0f",  # solar_power — base solar icon
+      "\ueb3b",  # ac_unit (snowflake) — A/C slot icon
+      "\ue88a",  # home — Apparent Power row
+      "\ue63c",  # electrical_services — Ecoflow / Load 1
+      # ── Solar sun ping-pong glyphs (state 1) ──────────────────
+      "\ue3a9",  # brightness_4
+      "\ue3aa",  # brightness_5
+      "\ue3ab",  # brightness_6
+      "\ue3ac",  # brightness_7
+      "\ue42d",  # wb_cloudy — daytime, no solar (state 0)
+    ]
+
+  - file: "gfonts://Material Symbols Outlined"
+    id: icon_font_moon
+    size: 80
+    glyphs: [
+      "\uf174",  # nights_stay  (moon cycle step 0)
+      "\uf34f",  # moon_stars   (moon cycle step 1)
+      "\uf31d",  # star_shine   (moon cycle step 2)
+      "\ue65f",  # auto_awesome (moon cycle step 3)
+      "\ue3e4",  # flare        (moon cycle step 4)
+    ]
+
+  # Battery icon glyphs — size 150 (large icon; visual backdrop spanning rows 2–3 on DC page)
+  - file: "gfonts://Material Icons"
+    id: icon_font_batt
+    size: 150
+    glyphs: [
+      "\ue1a4",  # battery_full
+      "\uebd4",  # battery_5_bar
+      "\uebe2",  # battery_4_bar
+      "\uebdd",  # battery_3_bar
+      "\uebe0",  # battery_2_bar
+      "\uebd9",  # battery_1_bar
+      "\uebdc",  # battery_0_bar
+      "\ue19c",  # battery_alert
+    ]
+
+# ── Time ──────────────────────────────────────────────────────
+# All PHT times use raw UTC epoch + 8h offset with gmtime_r — bypasses TZ env var.
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time:
+      # ── Analog clock hands — update every second ──────────────
+      # Uses lvgl.indicator.update (ESPHome native action) rather than the
+      # raw lv_meter_set_indicator_value C API, which is not in lambda scope.
+      # PHT calculation repeated per call — negligible cost at 1 Hz.
+      - seconds: /1
+        then:
+          - if:
+              condition:
+                lambda: 'return id(g_lvgl_ready);'
+              then:
+                - lvgl.indicator.update:
+                    id: clock_hour_hand
+                    value: !lambda |-
+                      auto now = id(ha_time).now();
+                      if (!now.is_valid()) return 0;
+                      time_t pht = now.timestamp + (8 * 3600);
+                      struct tm t; gmtime_r(&pht, &t);
+                      return (int)((t.tm_hour % 12) * 5 + t.tm_min / 12);
+                - lvgl.indicator.update:
+                    id: clock_min_hand
+                    value: !lambda |-
+                      auto now = id(ha_time).now();
+                      if (!now.is_valid()) return 0;
+                      time_t pht = now.timestamp + (8 * 3600);
+                      struct tm t; gmtime_r(&pht, &t);
+                      return t.tm_min;
+                - lvgl.indicator.update:
+                    id: clock_sec_hand
+                    value: !lambda |-
+                      auto now = id(ha_time).now();
+                      if (!now.is_valid()) return 0;
+                      time_t pht = now.timestamp + (8 * 3600);
+                      struct tm t; gmtime_r(&pht, &t);
+                      return t.tm_sec;
+                # Tail indicators — opposite direction (+30 on 0–60 scale = 180°)
+                - lvgl.indicator.update:
+                    id: clock_hour_tail
+                    value: !lambda |-
+                      auto now = id(ha_time).now();
+                      if (!now.is_valid()) return 0;
+                      time_t pht = now.timestamp + (8 * 3600);
+                      struct tm t; gmtime_r(&pht, &t);
+                      return ((int)((t.tm_hour % 12) * 5 + t.tm_min / 12) + 30) % 60;
+                - lvgl.indicator.update:
+                    id: clock_min_tail
+                    value: !lambda |-
+                      auto now = id(ha_time).now();
+                      if (!now.is_valid()) return 0;
+                      time_t pht = now.timestamp + (8 * 3600);
+                      struct tm t; gmtime_r(&pht, &t);
+                      return (t.tm_min + 30) % 60;
+                - lvgl.indicator.update:
+                    id: clock_sec_tail
+                    value: !lambda |-
+                      auto now = id(ha_time).now();
+                      if (!now.is_valid()) return 0;
+                      time_t pht = now.timestamp + (8 * 3600);
+                      struct tm t; gmtime_r(&pht, &t);
+                      return (t.tm_sec + 30) % 60;
+
+      # ── Daily restart check — fires every hour at HH:00:00 ────
+      - seconds: 0
+        minutes: 0
+        then:
+          - lambda: |-
+              auto now = id(ha_time).now();
+              if (!now.is_valid()) return;
+              time_t pht = now.timestamp + (8 * 3600);
+              struct tm t; gmtime_r(&pht, &t);
+              if (t.tm_hour == (int)id(daily_restart_hour).state) {
+                ESP_LOGW("restart", "Daily restart at %02d:00 PHT", t.tm_hour);
+                App.safe_reboot();
+              }
+
+# ── Debug (heap monitoring) ──────────────────────────────────
+debug:
+  update_interval: 5s
+
+# ── Sensors ──────────────────────────────────────────────────
+sensor:
+  # ── Heap monitoring ───────────────────────────────────────
+  - platform: debug
+    free:
+      name: "Heap Free"
+      id: heap_free
+      entity_category: diagnostic
+    block:
+      name: "Heap Largest Block"
+      id: heap_largest_block
+      entity_category: diagnostic
+    loop_time:
+      name: "Loop Time"
+      id: heap_loop_time
+      entity_category: diagnostic
+
+  # ── WiFi signal ───────────────────────────────────────────
+  - platform: wifi_signal
+    name: Signal strength
+    update_interval: 300s
+    accuracy_decimals: 0
+
+  # ── PV Solar power ────────────────────────────────────────
+  - platform: homeassistant
+    id: ha_solar
+    entity_id: ${solar_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_solar_val) = x;
+            id(update_solar_icon_state).execute();
+        - if:
+            condition:
+              lambda: 'return !id(g_demo_mode);'
+            then:
+              - lvgl.label.update:
+                  id: val_solar
+                  text: !lambda |-
+                    if (x >= 1000) return str_sprintf("%.2fkW", x / 1000.0f);
+                    if (x >= 100)  return str_sprintf("%.0fW", x);
+                    if (x >= 10)   return str_sprintf("%.1fW", x);
+                    return str_sprintf("%.2fW", x);
+                  text_color: !lambda |-
+                    if (x > 3600) return lv_color_hex(0x00FF00);
+                    if (x > 2000) return lv_color_hex(0x0096FF);
+                    if (x > 900)  return lv_color_hex(0xFFFF00);
+                    return lv_color_hex(0xFFA500);
+
+  # ── A/C 1F (Load 2 — AC page slot 0) ─────────────────────
+  - platform: homeassistant
+    id: ha_load2
+    entity_id: ${load2_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_load2_val) = x;
+            if (id(g_ac_slot_idx) == 0)
+              id(update_ac_slot_display).execute();
+
+  # ── A/C 2F (Load 3 — AC page slot 1) ─────────────────────
+  - platform: homeassistant
+    id: ha_load3
+    entity_id: ${load3_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_load3_val) = x;
+            if (id(g_ac_slot_idx) == 1)
+              id(update_ac_slot_display).execute();
+
+  # ── Ecoflow / Load 1 (AC page row 2 — always shown) ──────
+  - platform: homeassistant
+    id: ha_load1
+    entity_id: ${load1_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_load1_val) = x;
+            if (id(g_demo_mode)) return;
+            if (!id(g_lvgl_ready)) return;
+            lv_color_t clr = (x <= 0)   ? lv_color_hex(0xFFFF00) :
+                             (x < 700)  ? lv_color_hex(0x00FF00) :
+                             (x < 1000) ? lv_color_hex(0x0096FF) :
+                             (x < 1200) ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
+            lv_obj_set_style_text_color(id(icon_ecoflow), clr, 0);
+            lv_obj_set_style_text_color(id(val_load1), clr, 0);
+            char buf[16];
+            if      (x >= 1000) snprintf(buf, sizeof(buf), "%.2fkW", x / 1000.0f);
+            else if (x >= 100)  snprintf(buf, sizeof(buf), "%.0fW", x);
+            else if (x >= 10)   snprintf(buf, sizeof(buf), "%.1fW", x);
+            else                snprintf(buf, sizeof(buf), "%.2fW", x);
+            lv_label_set_text(id(val_load1), buf);
+
+  # ── Apparent power / Home load (AC page row 1) ────────────
+  - platform: homeassistant
+    id: ha_home
+    entity_id: ${home_entity}
+    on_value:
+      then:
+        - lambda: 'id(g_home_val) = x;'
+        - if:
+            condition:
+              lambda: 'return !id(g_demo_mode);'
+            then:
+              - lvgl.label.update:
+                  id: val_home
+                  text: !lambda |-
+                    if (x >= 1000) return str_sprintf("%.2fkVA", x / 1000.0f);
+                    if (x >= 100)  return str_sprintf("%.0fVA", x);
+                    if (x >= 10)   return str_sprintf("%.1fVA", x);
+                    return str_sprintf("%.2fVA", x);
+                  text_color: !lambda |-
+                    if (x < 1000) return lv_color_hex(0x00FF00);
+                    if (x < 2000) return lv_color_hex(0x0096FF);
+                    if (x < 3000) return lv_color_hex(0xFFFF00);
+                    return lv_color_hex(0xFFA500);
+              - lvgl.label.update:
+                  id: icon_home
+                  text_color: !lambda |-
+                    if (x < 1000) return lv_color_hex(0x00FF00);
+                    if (x < 2000) return lv_color_hex(0x0096FF);
+                    if (x < 3000) return lv_color_hex(0xFFFF00);
+                    return lv_color_hex(0xFFA500);
+
+  # ── Battery SOC (DC page row 2) ──────────────────────────
+  - platform: homeassistant
+    id: ha_battery
+    entity_id: ${battery_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_batt_soc_val) = x;
+            if (id(g_batt_slot) == 1) id(update_batt_display).execute();
+            id(update_batt_icon_state).execute();
+        - if:
+            condition:
+              lambda: 'return !id(g_demo_mode);'
+            then:
+              - lvgl.label.update:
+                  id: icon_battery
+                  text: !lambda |-
+                    if (x >= 98) return "\ue1a4";
+                    if (x >= 85) return "\uebd4";
+                    if (x >= 70) return "\uebe2";
+                    if (x >= 55) return "\uebdd";
+                    if (x >= 40) return "\uebe0";
+                    if (x >= 25) return "\uebd9";
+                    if (x >= 10) return "\uebdc";
+                    return "\ue19c";
+                  text_color: !lambda |-
+                    if (x >= 80) return lv_color_hex(0x00FF00);
+                    if (x >= 50) return lv_color_hex(0x0096FF);
+                    if (x >= 25) return lv_color_hex(0xFFFF00);
+                    return lv_color_hex(0xFFA500);
+              - lvgl.label.update:
+                  id: val_battery
+                  text: !lambda |-
+                    if (x >= 100) return str_sprintf("%.0f%%", x);
+                    if (x >= 10)  return str_sprintf("%.1f%%", x);
+                    return str_sprintf("%.2f%%", x);
+                  text_color: !lambda |-
+                    if (x >= 80) return lv_color_hex(0x00FF00);
+                    if (x >= 50) return lv_color_hex(0x0096FF);
+                    if (x >= 25) return lv_color_hex(0xFFFF00);
+                    return lv_color_hex(0xFFA500);
+
+  # ── Battery power (DC page row 3 slot 0) ─────────────────
+  - platform: homeassistant
+    id: ha_battery_power
+    entity_id: ${battery_power_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_batt_power_val) = x;
+            if (id(g_batt_slot) == 0)
+              id(update_batt_display).execute();
+
+  # ── Battery current (positive=charging, negative=discharging)
+  - platform: homeassistant
+    id: ha_batt_current
+    entity_id: ${batt_current_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_batt_current_val) = x;
+            if (id(g_batt_slot) == 1)
+              id(update_batt_display).execute();
+            id(update_batt_icon_state).execute();
+
+  # ── SRNE charge limit ─────────────────────────────────────
+  - platform: homeassistant
+    id: ha_srne_charge_limit
+    entity_id: ${srne_charge_limit_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_srne_charge_limit_val) = x;
+            if (id(g_batt_slot) == 1)
+              id(update_batt_display).execute();
+
+  # ── SRNE discharge limit ──────────────────────────────────
+  - platform: homeassistant
+    id: ha_srne_discharge_limit
+    entity_id: ${srne_discharge_limit_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_srne_discharge_limit_val) = x;
+            if (id(g_batt_slot) == 1)
+              id(update_batt_display).execute();
+
+  # ── Battery time estimate sensors (graphable in HA) ───────
+  - platform: template
+    name: "Battery Hours to Full"
+    id: batt_hours_to_full
+    unit_of_measurement: "h"
+    accuracy_decimals: 1
+    state_class: measurement
+    update_interval: never
+
+  - platform: template
+    name: "Battery Hours to Empty"
+    id: batt_hours_to_empty
+    unit_of_measurement: "h"
+    accuracy_decimals: 1
+    state_class: measurement
+    update_interval: never
+
+  - platform: template
+    name: "Battery Full At"
+    id: batt_full_at_min
+    unit_of_measurement: "min"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: never
+
+  - platform: template
+    name: "Battery Empty At"
+    id: batt_empty_at_min
+    unit_of_measurement: "min"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: never
+
+# ── Hardware ──────────────────────────────────────────────────
+# Display SPI: GPIO14(CLK) / GPIO13(MOSI) / GPIO12(MISO) / GPIO15(CS) / GPIO2(DC)
+spi:
+  - id: tft
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_output
+
+light:
+  - platform: monochromatic
+    output: backlight_output
+    name: "Display Backlight"
+    id: backlight
+    entity_category: config
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 0.5s
+
+display:
+  - platform: mipi_spi
+    model: ILI9341
+    id: lcd_display
+    spi_id: tft
+    cs_pin: GPIO15
+    dc_pin: GPIO2
+    auto_clear_enabled: false
+    update_interval: never
+    invert_colors: false
+    color_order: BGR
+    dimensions:
+      width: 240
+      height: 320
+
+# ── 1 s State Machine ────────────────────────────────────────
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          // ── Shared slot cycling timer (DC batt slot + AC A/C slot) ──
+          if (--id(g_slot_secs) <= 0) {
+            id(g_slot_secs) = (int)id(slot_cycle_secs).state;
+            id(advance_batt_slot).execute();
+            id(advance_ac_slot).execute();
+          }
+          // ── Screen transition countdown ───────────────────────────────
+          if (--id(g_screen_secs) <= 0) {
+            id(g_screen_secs) = (int)id(screen_transition_secs).state;
+            // Find next enabled screen; if all are off fall back to clock (0)
+            bool any_en = id(screen_clock_enabled).state ||
+                          id(screen_dc_enabled).state   ||
+                          id(screen_ac_enabled).state;
+            int next;
+            if (!any_en) {
+              next = 0; // all off → always show clock
+            } else {
+              next = id(g_screen_idx);
+              for (int i = 0; i < 3; i++) {
+                next = (next + 1) % 3;
+                bool en = (next == 0) ? id(screen_clock_enabled).state :
+                          (next == 1) ? id(screen_dc_enabled).state :
+                                        id(screen_ac_enabled).state;
+                if (en) break;
+              }
+            }
+            id(g_screen_idx) = next;
+            lv_obj_t* pages[] = {
+              id(clock_page)->obj,
+              id(dc_page)->obj,
+              id(ac_page)->obj
+            };
+            auto t = id(screen_transition_style).current_option();
+            lv_scr_load_anim_t anim = LV_SCR_LOAD_ANIM_MOVE_LEFT;
+            if (t == "Random") {
+              switch (esp_random() % 5) {
+                case 0: anim = LV_SCR_LOAD_ANIM_FADE_IN;     break;
+                case 1: anim = LV_SCR_LOAD_ANIM_MOVE_LEFT;   break;
+                case 2: anim = LV_SCR_LOAD_ANIM_MOVE_RIGHT;  break;
+                case 3: anim = LV_SCR_LOAD_ANIM_MOVE_TOP;    break;
+                case 4: anim = LV_SCR_LOAD_ANIM_MOVE_BOTTOM; break;
+              }
+            } else if (t == "Slide Right") anim = LV_SCR_LOAD_ANIM_MOVE_RIGHT;
+            else if   (t == "Slide Up")    anim = LV_SCR_LOAD_ANIM_MOVE_TOP;
+            else if   (t == "Slide Down")  anim = LV_SCR_LOAD_ANIM_MOVE_BOTTOM;
+            else if   (t == "Fade")        anim = LV_SCR_LOAD_ANIM_FADE_IN;
+            lv_scr_load_anim(pages[next], anim, (int)id(screen_anim_ms).state, 0, false);
+          }
+          // ── Solar: re-evaluate icon when no production (dusk/dawn) ───
+          if (id(g_solar_val) <= 0.0f)
+            id(update_solar_icon_state).execute();
+
+  # ── Battery SOC + Solar icon animation tick (250 ms) ─────────────────────
+  # Battery states: 0=static  1=charging(step up)  2=discharging(step down)  3=alert(flash)
+  # Solar states:   0=static(cloudy)  1=sun ping-pong  2=moon cycle
+  # All glyph changes use lv_label_set_text_static() — flash pointers, no heap copy.
+  - interval: 250ms
+    then:
+      - lambda: |-
+          if (!id(g_lvgl_ready)) return;
+
+          static int s_tick = 0;
+          s_tick++;
+
+          // ── Battery icon ─────────────────────────────────────────
+          {
+            int state = id(g_batt_anim_state);
+            if (state == 0) {
+              lv_obj_set_style_opa(id(icon_battery), LV_OPA_COVER, 0);
+            } else {
+              static const char* const BATT_GLYPHS[] = {
+                "\ue1a4", "\uebd4", "\uebe2", "\uebdd",
+                "\uebe0", "\uebd9", "\uebdc", "\ue19c"
+              };
+              static const uint32_t BATT_COLORS[] = {
+                0x00FF00, 0x00FF00, 0x0096FF, 0x0096FF,
+                0xFFFF00, 0xFFFF00, 0xFFA500, 0xFFA500
+              };
+              if (state == 3) {
+                lv_obj_set_style_opa(id(icon_battery),
+                  (s_tick & 1) ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+              } else if (s_tick % 4 == 0) {
+                float soc = id(g_batt_soc_val);
+                // In demo mode force mid-SOC bstart so animation cycles fully
+                int bstart = id(g_demo_mode) ? 3 :
+                             (soc >= 98) ? 0 : (soc >= 85) ? 1 : (soc >= 70) ? 2 :
+                             (soc >= 55) ? 3 : (soc >= 40) ? 4 : (soc >= 25) ? 5 : 6;
+                int bstep = id(g_batt_anim_step);
+                if (state == 1) {
+                  if (--bstep < 0) bstep = bstart;
+                } else {
+                  if (++bstep > 6) bstep = bstart;
+                }
+                id(g_batt_anim_step) = bstep;
+                lv_obj_set_style_opa(id(icon_battery), LV_OPA_COVER, 0);
+                lv_label_set_text_static(id(icon_battery), BATT_GLYPHS[bstep]);
+                lv_obj_set_style_text_color(id(icon_battery), lv_color_hex(BATT_COLORS[bstep]), 0);
+              }
+            }
+          }
+
+          // ── Solar icon glyph ping-pong ────────────────────────────
+          {
+            int solar_state = id(g_solar_anim_state);
+            if ((solar_state == 1 || solar_state == 2) && s_tick % 8 == 0) {
+              if (solar_state == 1) {
+                static const char* const SUN_GLYPHS[] = {
+                  "\uec0f", "\ue3ac", "\ue3a9", "\ue3ab",
+                  "\ue3aa", "\ue3ab", "\ue3a9", "\ue3ac"
+                };
+                int sstep = (id(g_solar_anim_step) + 1) % 8;
+                id(g_solar_anim_step) = sstep;
+                lv_label_set_text_static(id(icon_solar), SUN_GLYPHS[sstep]);
+                lv_obj_set_style_text_color(id(icon_solar), lv_color_hex(0xFFFF00), 0);
+              } else {
+                static const char* const MOON_GLYPHS[] = {
+                  "\uf174", "\uf34f", "\uf31d", "\ue65f", "\ue3e4"
+                };
+                int mstep = (id(g_solar_anim_step) + 1) % 5;
+                id(g_solar_anim_step) = mstep;
+                lv_label_set_text_static(id(icon_solar_moon), MOON_GLYPHS[mstep]);
+                lv_obj_set_style_text_color(id(icon_solar_moon), lv_color_hex(0x0096FF), 0);
+              }
+            }
+          }
+
+          // ── Demo mode: cycle solar states cloud→sun→moon every 6 s ──
+          if (id(g_demo_mode) && s_tick % 24 == 0) {
+            int next = (id(g_solar_anim_state) + 1) % 3;
+            id(g_solar_anim_state) = next;
+            id(g_solar_anim_step)  = 0;
+            if (next == 2) {
+              lv_obj_add_flag(id(icon_solar), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_clear_flag(id(icon_solar_moon), LV_OBJ_FLAG_HIDDEN);
+              lv_label_set_text_static(id(icon_solar_moon), "\uf174");
+              lv_obj_set_style_text_color(id(icon_solar_moon), lv_color_hex(0x0096FF), 0);
+            } else {
+              lv_obj_clear_flag(id(icon_solar), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(icon_solar_moon), LV_OBJ_FLAG_HIDDEN);
+              if (next == 0) {
+                lv_label_set_text_static(id(icon_solar), "\ue42d");  // wb_cloudy
+                lv_obj_set_style_text_color(id(icon_solar), lv_color_hex(0x888888), 0);
+              } else {
+                lv_label_set_text_static(id(icon_solar), "\uec0f");  // solar_power
+                lv_obj_set_style_text_color(id(icon_solar), lv_color_hex(0xFFFF00), 0);
+              }
+            }
+          }
+
+# ── HA Controls ───────────────────────────────────────────────
+number:
+  - platform: template
+    name: "Display Brightness"
+    id: display_brightness
+    entity_category: config
+    min_value: 20
+    max_value: 100
+    step: 10
+    initial_value: 50
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "%"
+    on_value:
+      then:
+        - light.turn_on:
+            id: backlight
+            brightness: !lambda 'return x / 100.0f;'
+            transition_length: 300ms
+
+  # Screen transition interval (1–30 s, default 10)
+  - platform: template
+    name: "Screen Transition"
+    id: screen_transition_secs
+    entity_category: config
+    mode: box
+    min_value: 1
+    max_value: 30
+    step: 1
+    initial_value: 10
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "s"
+    on_value:
+      then:
+        - lambda: 'id(g_screen_secs) = (int)x;'
+
+  # Screen transition animation duration (ms)
+  - platform: template
+    name: "Transition Duration"
+    id: screen_anim_ms
+    entity_category: config
+    mode: box
+    min_value: 200
+    max_value: 1500
+    step: 100
+    initial_value: 500
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "ms"
+
+  # Daily restart — PHT hour (0–23, default 3 = 3 AM)
+  - platform: template
+    name: "Daily Restart Hour"
+    id: daily_restart_hour
+    entity_category: config
+    mode: box
+    min_value: 0
+    max_value: 23
+    step: 1
+    initial_value: 3
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "hr"
+
+  # Slot cycling — drives both DC battery slot and AC A/C slot
+  - platform: template
+    name: "Slot Cycle Secs"
+    id: slot_cycle_secs
+    entity_category: config
+    mode: box
+    min_value: 1
+    max_value: 15
+    step: 1
+    initial_value: 2
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "s"
+    on_value:
+      then:
+        - lambda: 'id(g_slot_secs) = (int)x;'
+
+  # AC slot visibility thresholds — slot is skipped when power ≤ threshold
+  - platform: template
+    name: "Load 2 Threshold"
+    id: load2_threshold
+    entity_category: config
+    mode: box
+    min_value: 0
+    max_value: 500
+    step: 1
+    initial_value: 3
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "W"
+
+  - platform: template
+    name: "Load 3 Threshold"
+    id: load3_threshold
+    entity_category: config
+    mode: box
+    min_value: 0
+    max_value: 500
+    step: 1
+    initial_value: 10
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "W"
+
+  - platform: template
+    name: "Battery Capacity Ah"
+    id: battery_capacity_ah
+    entity_category: config
+    mode: box
+    min_value: 200
+    max_value: 700
+    step: 5
+    initial_value: 300
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "Ah"
+
+  - platform: template
+    name: "Batt Time Threshold"
+    id: batt_time_threshold_hrs
+    entity_category: config
+    mode: box
+    min_value: 1
+    max_value: 48
+    step: 1
+    initial_value: 18
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "h"
+
+# ── Switch Controls ───────────────────────────────────────────
+switch:
+  - platform: template
+    name: "Batt Time Estimate"
+    id: batt_time_enabled
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_off:
+      then:
+        - lambda: |-
+            if (id(g_batt_slot) == 1) {
+              id(g_batt_slot) = 0;
+              id(update_batt_display).execute();
+            }
+            float _soc  = id(g_batt_soc_val);
+            float _cur  = id(g_batt_current_val);
+            float _clim = id(g_srne_charge_limit_val);
+            float _dlim = id(g_srne_discharge_limit_val);
+            bool _chg = (_cur > 0.5f && _clim > _soc);
+            bool _dis = (_cur < -0.5f && _soc > _dlim);
+            id(batt_hours_to_full).publish_state(0.0f);
+            id(batt_hours_to_empty).publish_state(0.0f);
+            id(batt_full_at_min).publish_state(0.0f);
+            id(batt_empty_at_min).publish_state(0.0f);
+            id(batt_full_at_time).publish_state(
+              (_soc >= _clim) ? std::string("Full") :
+              _chg ? std::string("Charging") : std::string("Not Charging"));
+            id(batt_empty_at_time).publish_state(
+              (_soc <= _dlim) ? std::string("At Limit") :
+              _dis ? std::string("Discharging") : std::string("Not Discharging"));
+
+  - platform: template
+    name: "Batt Log Enabled"
+    id: batt_log_enabled
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  - platform: template
+    name: "Solar Log Enabled"
+    id: solar_log_enabled
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  # ── Screen enable toggles ──────────────────────────────────────
+  # Turn a screen OFF to skip it during auto-rotation.
+  # Safety rule: if ALL three are off the clock screen is shown regardless.
+  - platform: template
+    name: "Screen Clock Enable"
+    id: screen_clock_enabled
+    entity_category: config
+    icon: "mdi:clock-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    name: "Screen DC Enable"
+    id: screen_dc_enabled
+    entity_category: config
+    icon: "mdi:solar-power"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    name: "Screen AC Enable"
+    id: screen_ac_enabled
+    entity_category: config
+    icon: "mdi:lightning-bolt"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # ── Layout Preview ─────────────────────────────────────────────
+  # Freeze all display slots with max-width placeholder values so you
+  # can check alignment on every screen without live data changing.
+  # Slot 1 (battery time estimate) is shown so "12:00AM" fits too.
+  # Turn OFF to restore live sensor values.
+  - platform: template
+    name: "Layout Preview"
+    id: layout_preview
+    entity_category: diagnostic
+    icon: "mdi:ruler-square"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      then:
+        - lambda: |-
+            if (!id(g_lvgl_ready)) return;
+            // ── Seed icon animation states before locking demo mode ──
+            // Solar: sun ping-pong (state 1), start at step 0
+            id(g_solar_anim_state) = 1;
+            id(g_solar_anim_step)  = 0;
+            lv_obj_clear_flag(id(icon_solar), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(icon_solar_moon), LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text_static(id(icon_solar), "\uec0f");
+            lv_obj_set_style_text_color(id(icon_solar), lv_color_hex(0xFFFF00), 0);
+            // Battery: charging step-up (state 1), start at mid-SOC glyph
+            id(g_batt_anim_state) = 1;
+            id(g_batt_anim_step)  = 3;
+            lv_obj_set_style_opa(id(icon_battery), LV_OPA_COVER, 0);
+            lv_label_set_text_static(id(icon_battery), "\uebdd");
+            lv_obj_set_style_text_color(id(icon_battery), lv_color_hex(0x0096FF), 0);
+            // ── Lock demo mode (blocks sensor callbacks from overriding) ──
+            id(g_demo_mode) = true;
+            // DC page — Row 1: PV Power
+            lv_label_set_text(id(val_solar), "8.88kW");
+            // DC page — Row 2: Battery SOC
+            lv_label_set_text(id(val_battery), "88.8%");
+            // DC page — Row 3: slot 1 time estimate (longest format)
+            lv_label_set_text(id(lbl_batt_title), "Charges to 88% at");
+            lv_label_set_text(id(val_battery_power), "12:00AM");
+            // AC page — Row 1: Apparent Power
+            lv_label_set_text(id(val_home), "8.88kVA");
+            // AC page — Row 2: Ecoflow / Load 1
+            lv_label_set_text(id(val_load1), "8.88kW");
+            // AC page — Row 3: cycling A/C slot
+            lv_label_set_text(id(lbl_ac_slot), "A/C 1st Floor");
+            lv_label_set_text(id(val_ac_slot), "8.88kW");
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(g_demo_mode) = false;
+            if (!id(g_lvgl_ready)) return;
+            // Restore PV Solar from cached value
+            float sv = id(g_solar_val);
+            char sb[16];
+            if      (sv >= 1000) snprintf(sb, sizeof(sb), "%.2fkW", sv / 1000.0f);
+            else if (sv >= 100)  snprintf(sb, sizeof(sb), "%.0fW", sv);
+            else if (sv >= 10)   snprintf(sb, sizeof(sb), "%.1fW", sv);
+            else                 snprintf(sb, sizeof(sb), "%.2fW", sv);
+            lv_label_set_text(id(val_solar), sb);
+            // Restore Battery SOC from cached value
+            float bs = id(g_batt_soc_val);
+            char bb[16];
+            if      (bs >= 100) snprintf(bb, sizeof(bb), "%.0f%%", bs);
+            else if (bs >= 10)  snprintf(bb, sizeof(bb), "%.1f%%", bs);
+            else                snprintf(bb, sizeof(bb), "%.2f%%", bs);
+            lv_label_set_text(id(val_battery), bb);
+            // Restore Apparent Power from cached value
+            float hv = id(g_home_val);
+            char hb[16];
+            if      (hv >= 1000) snprintf(hb, sizeof(hb), "%.2fkVA", hv / 1000.0f);
+            else if (hv >= 100)  snprintf(hb, sizeof(hb), "%.0fVA", hv);
+            else if (hv >= 10)   snprintf(hb, sizeof(hb), "%.1fVA", hv);
+            else                 snprintf(hb, sizeof(hb), "%.2fVA", hv);
+            lv_label_set_text(id(val_home), hb);
+            // Restore Load 1 from cached value
+            float l1 = id(g_load1_val);
+            char lb[16];
+            if      (l1 >= 1000) snprintf(lb, sizeof(lb), "%.2fkW", l1 / 1000.0f);
+            else if (l1 >= 100)  snprintf(lb, sizeof(lb), "%.0fW", l1);
+            else if (l1 >= 10)   snprintf(lb, sizeof(lb), "%.1fW", l1);
+            else                 snprintf(lb, sizeof(lb), "%.2fW", l1);
+            lv_label_set_text(id(val_load1), lb);
+            // Restore battery power/time slot and AC slot via display scripts
+            id(update_batt_display).execute();
+            id(update_ac_slot_display).execute();
+            id(update_solar_icon_state).execute();
+            id(update_batt_icon_state).execute();
+
+# ── Screen Transition Style ───────────────────────────────────
+select:
+  - platform: template
+    name: "Transition Style"
+    id: screen_transition_style
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: "Random"
+    options:
+      - "Slide Left"
+      - "Slide Right"
+      - "Slide Up"
+      - "Slide Down"
+      - "Fade"
+      - "Random"
+
+# ── Text Sensors (battery time estimate — human-readable) ─────
+text_sensor:
+  - platform: template
+    name: "Battery Full At Time"
+    id: batt_full_at_time
+
+  - platform: template
+    name: "Battery Empty At Time"
+    id: batt_empty_at_time
+
+# ── Load Label Controls ───────────────────────────────────────
+text:
+  - platform: template
+    name: "Load 1 Label"
+    id: load1_label
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: "Ecoflow River 3"
+    mode: text
+    max_length: 16
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(g_lvgl_ready)) return;
+            lv_label_set_text(id(lbl_load1), id(load1_label).state.c_str());
+
+  - platform: template
+    name: "Load 2 Label"
+    id: load2_label
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: "A/C 1st Floor"
+    mode: text
+    max_length: 16
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(g_lvgl_ready) || id(g_ac_slot_idx) != 0) return;
+            id(update_ac_slot_display).execute();
+
+  - platform: template
+    name: "Load 3 Label"
+    id: load3_label
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: "A/C 2nd Floor"
+    mode: text
+    max_length: 16
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(g_lvgl_ready) || id(g_ac_slot_idx) != 1) return;
+            id(update_ac_slot_display).execute();
+
+# ── LVGL UI ───────────────────────────────────────────────────
+# Rotation 270° → canvas is 320×240 landscape.
+# Three pages cycle continuously via g_screen_idx / g_screen_secs.
+#
+# Color palette:
+#   0xFFFFFF  White   — labels, units
+#   0x888888  Grey    — title labels, static icons
+#   0x00FF00  Green   — good / high / charging well
+#   0x0096FF  Blue    — medium
+#   0xFFFF00  Yellow  — caution / idle / moderate
+#   0xFFA500  Orange  — alert / discharging / low
+#
+# Row geometry (Screens 1 & 2): 3 rows of 320×80 each.
+#   Container align=CENTER, y=−80/0/+80 → tops at y=0/80/160.
+#   Icon: align=CENTER x=−120 (page centre x≈40).
+#   Content: align=CENTER x=+35 (page centre x=195); title y=−30, value y=+7.
+#   Units embedded in value strings — no separate unit label.
+#   DC page exceptions: Row 2 container height=240 (battery icon backdrop), Row 3 container x=+45 (no icon).
+lvgl:
+  displays:
+    - lcd_display
+  buffer_size: 10%
+  rotation: 270
+  pages:
+
+    # ════════════════════════════════════════════════════════════
+    # Screen 0 — Analog Clock (full 320×240, no digital time)
+    # ════════════════════════════════════════════════════════════
+    - id: clock_page
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+
+        # ── Clock face: LVGL meter widget ─────────────────────
+        # Three scales, all range 0–60 / angle_range 360 / rotation=270:
+        #   Scale 1: 61 minute ticks + hour hand/tail + minute hand/tail
+        #   Scale 2: 13 bold hour-mark ticks (no indicators)
+        #   Scale 3: invisible ticks + second hand/tail (drawn last, always on top)
+        - meter:
+            id: analog_clock
+            align: CENTER
+            width: 265
+            height: 265
+            bg_opa: TRANSP
+            border_width: 0
+            scales:
+              # ── Scale 1: Minute ticks + hour & minute hands ──────────────────
+              - range_from: 0
+                range_to: 60
+                angle_range: 360
+                rotation: 270
+                ticks:
+                  count: 61
+                  length: 15
+                  width: 2
+                  color: 0x666666
+                indicators:
+                  # Hour hand — short, thick, white
+                  - line:
+                      id: clock_hour_hand
+                      width: 12
+                      color: 0xFFFFFF
+                      length: 60
+                      value: 0
+                  # Hour tail — counterweight behind pivot
+                  - line:
+                      id: clock_hour_tail
+                      width: 12
+                      color: 0xFFFFFF
+                      length: 15
+                      value: 0
+                  # Minute hand — long, medium, white
+                  - line:
+                      id: clock_min_hand
+                      width: 10
+                      color: 0xFFFFFF
+                      length: 115
+                      value: 0
+                  # Minute tail — counterweight behind pivot
+                  - line:
+                      id: clock_min_tail
+                      width: 10
+                      color: 0xFFFFFF
+                      length: 20
+                      value: 0
+              # ── Scale 2: Bold hour-position tick marks ────────────────────────
+              # range 0–12 with count=13 places 12 distinct marks
+              # at the exact same angular positions as range 0–60 / stride 5.
+              # No major: section → no labels drawn.
+              - range_from: 0
+                range_to: 12
+                angle_range: 360
+                rotation: 270
+                ticks:
+                  count: 13
+                  length: 20
+                  width: 5
+                  color: 0xAAAAAA
+              # ── Scale 3: Second hand + tail — drawn last, always on top ──────
+              - range_from: 0
+                range_to: 60
+                angle_range: 360
+                rotation: 270
+                ticks:
+                  count: 2
+                  length: 1
+                  width: 1
+                  color: 0x000000
+                indicators:
+                  # Second hand — full length, thin, red
+                  - line:
+                      id: clock_sec_hand
+                      width: 5
+                      color: 0xFF4040
+                      length: 115
+                      value: 0
+                  # Second tail — counterweight behind pivot
+                  - line:
+                      id: clock_sec_tail
+                      width: 5
+                      color: 0xFF4040
+                      length: 25
+                      value: 0
+
+        # ── Cardinal hour labels (12 / 3 / 6 / 9) ─────────────
+        # Positioned at radius 85 px from page centre (160, 120).
+        - label:
+            text: "12"
+            text_font: clock_num_font
+            text_color: 0xFFFFFF
+            align: CENTER
+            y: -85
+        - label:
+            text: "3"
+            text_font: clock_num_font
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 85
+        - label:
+            text: "6"
+            text_font: clock_num_font
+            text_color: 0xFFFFFF
+            align: CENTER
+            y: 85
+        - label:
+            text: "9"
+            text_font: clock_num_font
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: -85
+
+        # ── Center pivot dot (red) ──────────────────────────────
+        - obj:
+            align: CENTER
+            width: 12
+            height: 12
+            border_width: 0
+            radius: 6
+            bg_color: 0xFF0000
+            bg_opa: COVER
+
+    # ════════════════════════════════════════════════════════════
+    # Screen 1 — DC Page (3 vertical rows, 320×80 each)
+    #   Row 1: PV Power
+    #   Row 2: Battery SOC
+    #   Row 3: Battery Power / Time estimate (cycling)
+    # ════════════════════════════════════════════════════════════
+    - id: dc_page
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+        
+        # ── Row dividers ──────────────────────────────────────
+        - line:
+            points:
+              - 0, 0
+              - 320, 0
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 0, 80
+              - 320, 80
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 0, 239
+              - 320, 239
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 0, 1
+              - 0, 240
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 319, 0
+              - 319, 240
+            line_color: 0x333333
+            line_width: 1
+        
+        # ── Row 1: PV Power (top, y=0–80) ────────────────────
+        - obj:
+            width: 320
+            height: 80
+            align: CENTER
+            x: 8
+            y: -80
+            bg_opa: TRANSP
+            border_width: 0
+            radius: 0
+            scrollable: false
+            widgets:
+              # Solar / moon icon (animated by update_solar_icon_state + 250ms interval)
+              - label:
+                  id: icon_solar
+                  text: "\uec0f"
+                  text_font: icon_font
+                  text_color: 0xFFFF00
+                  align: CENTER
+                  x: -120
+              - label:
+                  id: icon_solar_moon
+                  text: "\uf174"
+                  text_font: icon_font_moon
+                  text_color: 0x0096FF
+                  align: CENTER
+                  x: -120
+                  hidden: true
+              - label:
+                  text: "PV Power"
+                  text_font: label_font
+                  text_color: 0x888888
+                  align: CENTER
+                  x: 30
+                  y: -30
+              - label:
+                  id: val_solar
+                  text: "8.88W"
+                  text_font: value_font
+                  text_color: 0xFFFF00
+                  align: CENTER
+                  x: 30
+                  y: 5
+
+        # ── Row 2: Battery SOC (full-height background; large 150px icon
+        #    centred at y=40 from page-centre spans rows 2–3 as a visual backdrop)
+        - obj:
+            width: 320
+            height: 240
+            align: CENTER
+            bg_opa: TRANSP
+            border_width: 0
+            radius: 0
+            scrollable: false
+            widgets:
+              # Battery icon — animated by update_batt_icon_state + 250ms interval
+              - label:
+                  id: icon_battery
+                  text: "\ue1a4"
+                  text_font: icon_font_batt
+                  text_color: 0x00FF00
+                  align: CENTER
+                  x: -127
+                  y: 40
+              - label:
+                  text: "Battery SOC"
+                  text_font: label_font
+                  text_color: 0x888888
+                  align: CENTER
+                  x: 35
+                  y: -25
+              - label:
+                  id: val_battery
+                  text: "88.8%"
+                  text_font: value_font
+                  text_color: 0x0096FF
+                  align: CENTER
+                  x: 35
+                  y: 12
+
+        # ── Row 3: Battery Power / Time estimate (bottom, y=160–240) ─
+        # Container has x=+45 offset (aligns content under val_battery above; no icon in this row).
+        # Title and value both centered within container — content changes with batt_slot cycling.
+        - obj:
+            width: 320
+            height: 80
+            align: CENTER
+            y: 80
+            x: 31
+            bg_opa: TRANSP
+            border_width: 0
+            radius: 0
+            scrollable: false
+            widgets:
+              - label:
+                  id: lbl_batt_title
+                  text: "Battery Power"
+                  text_font: label_font
+                  text_color: 0x888888
+                  align: CENTER
+                  y: -30
+              - label:
+                  id: val_battery_power
+                  text: "8.88W"
+                  text_font: value_font
+                  text_color: 0xFFFF00
+                  align: CENTER
+                  y: 7
+
+    # ════════════════════════════════════════════════════════════
+    # Screen 2 — AC Page (3 vertical rows, 320×80 each)
+    #   Row 1: Apparent Power
+    #   Row 2: Ecoflow / Load 1 (fixed)
+    #   Row 3: A/C 1F ↔ A/C 2F (cycling)
+    # ════════════════════════════════════════════════════════════
+    - id: ac_page
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+
+        # ── Row dividers ──────────────────────────────────────
+        - line:
+            points:
+              - 0, 0
+              - 320, 0
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 0, 80
+              - 320, 80
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 0, 160
+              - 320, 160
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 0, 239
+              - 320, 239
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 0, 1
+              - 0, 240
+            line_color: 0x333333
+            line_width: 1
+        - line:
+            points:
+              - 319, 0
+              - 319, 240
+            line_color: 0x333333
+            line_width: 1
+
+        # ── Row 1: Apparent Power (top, y=0–80) ───────────────
+        - obj:
+            width: 320
+            height: 80
+            align: CENTER
+            y: -80
+            bg_opa: TRANSP
+            border_width: 0
+            radius: 0
+            scrollable: false
+            widgets:
+              - label:
+                  id: icon_home
+                  text: "\ue88a"
+                  text_font: icon_font
+                  text_color: 0x00FF00
+                  align: CENTER
+                  x: -120
+              - label:
+                  text: "Apparent Power"
+                  text_font: label_font
+                  text_color: 0x888888
+                  align: CENTER
+                  x: 35
+                  y: -30
+              - label:
+                  id: val_home
+                  text: "0.00VA"
+                  text_font: value_font
+                  text_color: 0x00FF00
+                  align: CENTER
+                  x: 35
+                  y: 7
+
+        # ── Row 2: Ecoflow / Load 1 (middle, y=80–160) ────────
+        - obj:
+            width: 320
+            height: 80
+            align: CENTER
+            y: 0
+            bg_opa: TRANSP
+            border_width: 0
+            radius: 0
+            scrollable: false
+            widgets:
+              - label:
+                  id: icon_ecoflow
+                  text: "\ue63c"
+                  text_font: icon_font
+                  text_color: 0xFFFF00
+                  align: CENTER
+                  x: -120
+              - label:
+                  id: lbl_load1
+                  text: "Ecoflow River 3"
+                  text_font: label_font
+                  text_color: 0x888888
+                  align: CENTER
+                  x: 35
+                  y: -30
+              - label:
+                  id: val_load1
+                  text: "0.00W"
+                  text_font: value_font
+                  text_color: 0xFFFF00
+                  align: CENTER
+                  x: 35
+                  y: 7
+
+        # ── Row 3: A/C 1F ↔ A/C 2F cycling (bottom, y=160–240)
+        - obj:
+            width: 320
+            height: 80
+            align: CENTER
+            y: 80
+            bg_opa: TRANSP
+            border_width: 0
+            radius: 0
+            scrollable: false
+            widgets:
+              - label:
+                  id: icon_ac_slot
+                  text: "\ueb3b"
+                  text_font: icon_font
+                  text_color: 0xFFFF00
+                  align: CENTER
+                  x: -120
+              - label:
+                  id: lbl_ac_slot
+                  text: "A/C 1st Floor"
+                  text_font: label_font
+                  text_color: 0x888888
+                  align: CENTER
+                  x: 35
+                  y: -30
+              - label:
+                  id: val_ac_slot
+                  text: "0.00W"
+                  text_font: value_font
+                  text_color: 0xFFFF00
+                  align: CENTER
+                  x: 35
+                  y: 7
