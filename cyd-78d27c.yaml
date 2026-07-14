@@ -6,6 +6,10 @@
 #   Screen 1 — DC Page               (PV Power / Battery SOC / Battery Power+Time)
 #   Screen 2 — AC Page               (Apparent Power / Ecoflow / A/C 1F↔2F cycling)
 #
+# Overlay alert:
+#   Doorbell — full-screen flashing alert ("DOOR"/"BELL") triggered by HA button entity.
+#              Max brightness for configurable duration, then restores previous brightness.
+#
 # All screens rotate automatically; transition interval is HA-configurable (1–30 s).
 # Daily device restart at a configurable PHT hour (default 3 AM).
 # Screens 1 & 2 have three vertically-stacked rows (320×80 each).
@@ -28,6 +32,8 @@ substitutions:
   batt_current_entity:         "sensor.total_battery_current"
   srne_charge_limit_entity:    "number.srne_batttery_charge_limit"
   srne_discharge_limit_entity: "number.srne_batttery_discharge_limit"
+  # ── Doorbell ─────────────────────────────────────────────────
+  doorbell_entity:             "input_button.doorbell"
 
 esphome:
   name: ${name}
@@ -192,6 +198,20 @@ globals:
     type: bool
     restore_value: false
     initial_value: 'false'
+
+  # ── Doorbell overlay alert ───────────────────────────────────
+  - id: g_doorbell_active   # true while doorbell page is showing
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: g_doorbell_ticks    # countdown in 250ms ticks
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: g_saved_brightness  # backlight level saved before alert, restored after
+    type: float
+    restore_value: false
+    initial_value: '0.5'
 
 script:
   # ── Battery Power/Time Slot Display (DC page row 3) ──────────
@@ -610,6 +630,12 @@ font:
       "\ue19c",  # battery_alert
     ]
 
+  # Doorbell alert font — large two-line display ("DOOR" / "BELL")
+  - file: "gfonts://Roboto"
+    id: doorbell_font
+    size: 100
+    glyphs: "BDELOR"  # covers "DOOR" (D,O,R) and "BELL" (B,E,L)
+
 # ── Time ──────────────────────────────────────────────────────
 # All PHT times use raw UTC epoch + 8h offset with gmtime_r — bypasses TZ env var.
 time:
@@ -988,46 +1014,52 @@ interval:
             id(advance_ac_slot).execute();
           }
           // ── Screen transition countdown ───────────────────────────────
+          // Paused while doorbell overlay is active — timer still ticks but
+          // transition is skipped so the alert is not cut short.
           if (--id(g_screen_secs) <= 0) {
             id(g_screen_secs) = (int)id(screen_transition_secs).state;
-            // Find next enabled screen; if all are off fall back to clock (0)
-            bool any_en = id(screen_clock_enabled).state ||
-                          id(screen_dc_enabled).state   ||
-                          id(screen_ac_enabled).state;
-            int next;
-            if (!any_en) {
-              next = 0; // all off → always show clock
+            if (id(g_doorbell_active)) {
+              // Doorbell showing — skip this transition, let countdown finish
             } else {
-              next = id(g_screen_idx);
-              for (int i = 0; i < 3; i++) {
-                next = (next + 1) % 3;
-                bool en = (next == 0) ? id(screen_clock_enabled).state :
-                          (next == 1) ? id(screen_dc_enabled).state :
-                                        id(screen_ac_enabled).state;
-                if (en) break;
+              // Find next enabled screen; if all are off fall back to clock (0)
+              bool any_en = id(screen_clock_enabled).state ||
+                            id(screen_dc_enabled).state   ||
+                            id(screen_ac_enabled).state;
+              int next;
+              if (!any_en) {
+                next = 0; // all off → always show clock
+              } else {
+                next = id(g_screen_idx);
+                for (int i = 0; i < 3; i++) {
+                  next = (next + 1) % 3;
+                  bool en = (next == 0) ? id(screen_clock_enabled).state :
+                            (next == 1) ? id(screen_dc_enabled).state :
+                                          id(screen_ac_enabled).state;
+                  if (en) break;
+                }
               }
+              id(g_screen_idx) = next;
+              lv_obj_t* pages[] = {
+                id(clock_page)->obj,
+                id(dc_page)->obj,
+                id(ac_page)->obj
+              };
+              auto t = id(screen_transition_style).current_option();
+              lv_scr_load_anim_t anim = LV_SCR_LOAD_ANIM_MOVE_LEFT;
+              if (t == "Random") {
+                switch (esp_random() % 5) {
+                  case 0: anim = LV_SCR_LOAD_ANIM_FADE_IN;     break;
+                  case 1: anim = LV_SCR_LOAD_ANIM_MOVE_LEFT;   break;
+                  case 2: anim = LV_SCR_LOAD_ANIM_MOVE_RIGHT;  break;
+                  case 3: anim = LV_SCR_LOAD_ANIM_MOVE_TOP;    break;
+                  case 4: anim = LV_SCR_LOAD_ANIM_MOVE_BOTTOM; break;
+                }
+              } else if (t == "Slide Right") anim = LV_SCR_LOAD_ANIM_MOVE_RIGHT;
+              else if   (t == "Slide Up")    anim = LV_SCR_LOAD_ANIM_MOVE_TOP;
+              else if   (t == "Slide Down")  anim = LV_SCR_LOAD_ANIM_MOVE_BOTTOM;
+              else if   (t == "Fade")        anim = LV_SCR_LOAD_ANIM_FADE_IN;
+              lv_scr_load_anim(pages[next], anim, (int)id(screen_anim_ms).state, 0, false);
             }
-            id(g_screen_idx) = next;
-            lv_obj_t* pages[] = {
-              id(clock_page)->obj,
-              id(dc_page)->obj,
-              id(ac_page)->obj
-            };
-            auto t = id(screen_transition_style).current_option();
-            lv_scr_load_anim_t anim = LV_SCR_LOAD_ANIM_MOVE_LEFT;
-            if (t == "Random") {
-              switch (esp_random() % 5) {
-                case 0: anim = LV_SCR_LOAD_ANIM_FADE_IN;     break;
-                case 1: anim = LV_SCR_LOAD_ANIM_MOVE_LEFT;   break;
-                case 2: anim = LV_SCR_LOAD_ANIM_MOVE_RIGHT;  break;
-                case 3: anim = LV_SCR_LOAD_ANIM_MOVE_TOP;    break;
-                case 4: anim = LV_SCR_LOAD_ANIM_MOVE_BOTTOM; break;
-              }
-            } else if (t == "Slide Right") anim = LV_SCR_LOAD_ANIM_MOVE_RIGHT;
-            else if   (t == "Slide Up")    anim = LV_SCR_LOAD_ANIM_MOVE_TOP;
-            else if   (t == "Slide Down")  anim = LV_SCR_LOAD_ANIM_MOVE_BOTTOM;
-            else if   (t == "Fade")        anim = LV_SCR_LOAD_ANIM_FADE_IN;
-            lv_scr_load_anim(pages[next], anim, (int)id(screen_anim_ms).state, 0, false);
           }
           // ── Solar: re-evaluate icon when no production (dusk/dawn) ───
           if (id(g_solar_val) <= 0.0f)
@@ -1127,6 +1159,31 @@ interval:
                 lv_label_set_text_static(id(icon_solar), "\uec0f");  // solar_power
                 lv_obj_set_style_text_color(id(icon_solar), lv_color_hex(0xFFFF00), 0);
               }
+            }
+          }
+
+          // ── Doorbell alert: flash background + countdown ──────────
+          if (id(g_doorbell_active)) {
+            static const uint32_t DB_COLORS[] = {
+              0xFF0000, 0xFF8800, 0xFFFF00, 0x00FF00,
+              0x0088FF, 0x8800FF, 0xFF00FF, 0xFFFFFF
+            };
+            lv_obj_set_style_bg_color(id(doorbell_page)->obj,
+              lv_color_hex(DB_COLORS[esp_random() % 8]), 0);
+            lv_obj_invalidate(id(doorbell_page)->obj);
+            if (--id(g_doorbell_ticks) <= 0) {
+              id(g_doorbell_active) = false;
+              ESP_LOGW("doorbell", "Doorbell alert dismissed — restoring brightness to %.0f%%",
+                id(g_saved_brightness) * 100.0f);
+              // Restore brightness to saved level
+              auto call = id(backlight).make_call();
+              call.set_brightness(id(g_saved_brightness));
+              call.perform();
+              // Return to current rotation screen
+              lv_obj_t* pages[] = {
+                id(clock_page)->obj, id(dc_page)->obj, id(ac_page)->obj
+              };
+              lv_scr_load_anim(pages[id(g_screen_idx)], LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
             }
           }
 
@@ -1265,6 +1322,20 @@ number:
     optimistic: true
     unit_of_measurement: "h"
 
+  - platform: template
+    name: "Doorbell Duration"
+    id: doorbell_duration_secs
+    entity_category: config
+    icon: "mdi:bell-ring"
+    mode: box
+    min_value: 1
+    max_value: 30
+    step: 1
+    initial_value: 5
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "s"
+
 # ── Switch Controls ───────────────────────────────────────────
 switch:
   - platform: template
@@ -1310,6 +1381,15 @@ switch:
     entity_category: config
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
+
+  # ── Doorbell alert enable ──────────────────────────────────────
+  - platform: template
+    name: "Doorbell Enabled"
+    id: doorbell_enabled
+    entity_category: config
+    icon: "mdi:bell-ring-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
 
   # ── Screen enable toggles ──────────────────────────────────────
   # Turn a screen OFF to skip it during auto-rotation.
@@ -1445,6 +1525,27 @@ select:
 
 # ── Text Sensors (battery time estimate — human-readable) ─────
 text_sensor:
+  # ── Doorbell trigger ────────────────────────────────────────
+  # input_button state changes to a new timestamp on every press.
+  # on_value fires on each change → triggers the doorbell alert.
+  - platform: homeassistant
+    id: ha_doorbell
+    entity_id: ${doorbell_entity}
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(doorbell_enabled).state) return;
+            if (id(g_doorbell_active)) return;  // ignore while alert is showing
+            if (!id(g_lvgl_ready)) return;
+            id(g_doorbell_active) = true;
+            id(g_doorbell_ticks)  = (int)(id(doorbell_duration_secs).state * 4.0f);
+            id(g_saved_brightness) = id(backlight).current_values.get_brightness();
+            ESP_LOGW("doorbell", "Doorbell pressed — alert starting (%.0fs, brightness %.0f%%)",
+              id(doorbell_duration_secs).state, id(g_saved_brightness) * 100.0f);
+            auto call = id(backlight).make_call();
+            call.set_brightness(1.0f);
+            call.perform();
+            lv_scr_load_anim(id(doorbell_page)->obj, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
   - platform: template
     name: "Battery Full At Time"
     id: batt_full_at_time
@@ -1968,3 +2069,28 @@ lvgl:
                   align: CENTER
                   x: 35
                   y: 7
+
+    # ════════════════════════════════════════════════════════════
+    # Doorbell Overlay — triggered by ${doorbell_entity} press
+    # Full-screen alert: background flashes random colors every
+    # 250 ms for doorbell_duration_secs seconds, then auto-dismisses.
+    # Not part of the screen rotation — loaded/unloaded by the
+    # ha_doorbell on_value handler and 250ms interval countdown.
+    # ════════════════════════════════════════════════════════════
+    - id: doorbell_page
+      bg_color: 0xFF0000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+        - label:
+            text: "DOOR"
+            text_font: doorbell_font
+            text_color: 0xFFFFFF
+            align: CENTER
+            y: -55
+        - label:
+            text: "BELL"
+            text_font: doorbell_font
+            text_color: 0xFFFFFF
+            align: CENTER
+            y: 55
