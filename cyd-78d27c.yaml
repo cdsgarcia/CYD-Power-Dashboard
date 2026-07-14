@@ -618,7 +618,7 @@ font:
   # Battery icon glyphs — size 150 (large icon; visual backdrop spanning rows 2–3 on DC page)
   - file: "gfonts://Material Icons"
     id: icon_font_batt
-    size: 150
+    size: 145
     glyphs: [
       "\ue1a4",  # battery_full
       "\uebd4",  # battery_5_bar
@@ -1331,7 +1331,7 @@ number:
     min_value: 1
     max_value: 30
     step: 1
-    initial_value: 5
+    initial_value: 10
     restore_value: true
     optimistic: true
     unit_of_measurement: "s"
@@ -1456,7 +1456,7 @@ switch:
             lv_label_set_text(id(val_battery), "88.8%");
             // DC page — Row 3: slot 1 time estimate (longest format)
             lv_label_set_text(id(lbl_batt_title), "Charges to 88% at");
-            lv_label_set_text(id(val_battery_power), "12:00AM");
+            lv_label_set_text(id(val_battery_power), "12:00PM");
             // AC page — Row 1: Apparent Power
             lv_label_set_text(id(val_home), "8.88kVA");
             // AC page — Row 2: Ecoflow / Load 1
@@ -1812,7 +1812,6 @@ lvgl:
             width: 320
             height: 80
             align: CENTER
-            x: 8
             y: -80
             bg_opa: TRANSP
             border_width: 0
@@ -1826,7 +1825,7 @@ lvgl:
                   text_font: icon_font
                   text_color: 0xFFFF00
                   align: CENTER
-                  x: -130
+                  x: -120
               - label:
                   id: icon_solar_moon
                   text: "\uf174"
@@ -1840,7 +1839,7 @@ lvgl:
                   text_font: label_font
                   text_color: 0x888888
                   align: CENTER
-                  x: 30
+                  x: 35
                   y: -30
               - label:
                   id: val_solar
@@ -1848,14 +1847,14 @@ lvgl:
                   text_font: value_font
                   text_color: 0xFFFF00
                   align: CENTER
-                  x: 30
-                  y: 5
+                  x: 35
+                  y: 7
 
         # ── Row 2: Battery SOC (full-height background; large 150px icon
         #    centred at y=40 from page-centre spans rows 2–3 as a visual backdrop)
         - obj:
             width: 320
-            height: 240
+            height: 200
             align: CENTER
             bg_opa: TRANSP
             border_width: 0
@@ -1869,15 +1868,15 @@ lvgl:
                   text_font: icon_font_batt
                   text_color: 0x00FF00
                   align: CENTER
-                  x: -127
-                  y: 40
+                  x: -130
+                  y: 38
               - label:
                   text: "Battery SOC"
                   text_font: label_font
                   text_color: 0x888888
                   align: CENTER
                   x: 35
-                  y: -25
+                  y: -30
               - label:
                   id: val_battery
                   text: "88.8%"
@@ -1885,7 +1884,7 @@ lvgl:
                   text_color: 0x0096FF
                   align: CENTER
                   x: 35
-                  y: 12
+                  y: 7
 
         # ── Row 3: Battery Power / Time estimate (bottom, y=160–240) ─
         # Container has x=+31 offset (aligns content under val_battery above; no icon in this row).
@@ -1895,7 +1894,7 @@ lvgl:
             height: 80
             align: CENTER
             y: 80
-            x: 31
+            x: 30
             bg_opa: TRANSP
             border_width: 0
             radius: 0
@@ -1993,7 +1992,7 @@ lvgl:
                   y: -30
               - label:
                   id: val_home
-                  text: "0.00VA"
+                  text: "8.88kVA"
                   text_font: value_font
                   text_color: 0x00FF00
                   align: CENTER
@@ -2028,7 +2027,7 @@ lvgl:
                   y: -30
               - label:
                   id: val_load1
-                  text: "0.00W"
+                  text: "0.00kW"
                   text_font: value_font
                   text_color: 0xFFFF00
                   align: CENTER
@@ -2063,7 +2062,7 @@ lvgl:
                   y: -30
               - label:
                   id: val_ac_slot
-                  text: "0.00W"
+                  text: "8.88kW"
                   text_font: value_font
                   text_color: 0xFFFF00
                   align: CENTER

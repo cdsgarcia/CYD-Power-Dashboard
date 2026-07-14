@@ -1,0 +1,30 @@
+
+# Screen 2 — AC Page (3 vertical rows, 320×80 each)
+#   Row 1: Apparent Power
+#   Row 2: Ecoflow / Load 1 (fixed)
+#   Row 3: A/C 1F ↔ A/C 2F (cycling)
+
+# ── Row 1: Apparent Power (top, y=0–80) ───────────────
+- obj:
+    width: 320
+    height: 80
+    y: -80
+    widgets:
+                  id: val_home
+                  x: 35
+                  y: 7
+# ── Row 2: Ecoflow / Load 1 (middle, y=80–160) ────────
+- obj:
+    y: 0
+                  id: val_load1
+                  x: 35
+                  y: 7
+
+# ── Row 3: A/C 1F ↔ A/C 2F cycling (bottom, y=160–240)
+- obj:
+    width: 320
+    height: 80
+    y: 80
+                  id: val_ac_slot
+                  x: 35
+                  y: 7
