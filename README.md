@@ -150,3 +150,22 @@ esphome config cyd-78d27c.yaml
 - All Philippine Time (PHT, UTC+8) calculations use `timestamp + (8×3600)` + `gmtime_r` — no TZ environment variable dependency.
 - If all three screen-enable switches are turned OFF, the clock screen is always shown as a fallback.
 - The doorbell alert ignores subsequent presses while already active; it dismisses automatically after the configured duration.
+
+---
+
+## Support
+
+If this project has been useful to you, consider buying me a coffee ☕
+
+### <img src="docs/logo-ln.png" width="20"> Lightning
+<img src="docs/qr-lightning.png" width="200"><br>
+`greatjogging67@walletofsatoshi.com`
+
+### <img src="docs/logo-xrp.png" width="20"> XRP
+<img src="docs/qr-xrp.png" width="200"><br>
+`rpWJmMcPM4ynNfvhaZFYmPhBq5FYfDJBZu`<br>
+Destination Tag: `2135058530`
+
+### <img src="docs/logo-btc.png" width="20"> BTC
+<img src="docs/qr-btc.png" width="200"><br>
+`bc1q5tqqew0wlpkdz22crltreu5ngc9sdje9hzr4vv`
