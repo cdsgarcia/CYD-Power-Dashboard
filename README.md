@@ -23,6 +23,17 @@ Three vertically-stacked rows (320×80 each):
 | 2 | **Battery SOC** — large animated battery icon + % value |
 | 3 | **Battery Power / Time Estimate** *(cycling)* — power in W/kW or estimated charge/discharge time |
 
+**Battery icon animation states:**
+
+| State | Condition | Behaviour |
+|-------|-----------|-----------|
+| Static | Idle (current ≈ 0 A) | Fixed glyph at current SOC level |
+| Charging | Current > 0.5 A | Icon steps up toward full (index 0), resets to current SOC level |
+| Discharging | Current < −0.5 A | Icon steps down toward empty (index 6), resets to current SOC level |
+| Alert | SOC < 10 % | Icon flashes at 2 Hz |
+
+The animation step counter only resets on a **state transition** (e.g. idle → charging). Ongoing sensor updates with an unchanged state do not interrupt the running cycle.
+
 ### Screen 2 — AC Page
 Three vertically-stacked rows (320×80 each):
 
@@ -152,6 +163,7 @@ esphome config cyd-78d27c.yaml
 - If all three screen-enable switches are turned OFF, the clock screen is always shown as a fallback.
 - The doorbell alert ignores subsequent presses while already active; it dismisses automatically after the configured duration.
 - On ESP32 boot or HA server restart, the `input_button` entity sends its last-pressed timestamp as the initial state sync. This is silently absorbed by tracking the last seen value in `g_doorbell_last_state` — the alert only fires when the value actually changes after the first delivery.
+- The battery icon animation step counter only resets when the animation **state changes** (idle↔charging↔discharging↔alert). If the SOC or current sensor updates arrive while the state is unchanged, the running animation cycle continues uninterrupted. At boundary SOC levels (≥98% charging or <25% discharging) the cycle is clamped to always cover at least 3 glyphs so the animation remains visible.
 
 ---
 
