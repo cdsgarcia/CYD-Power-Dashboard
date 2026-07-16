@@ -545,8 +545,13 @@ script:
           int start = (soc >= 98) ? 0 : (soc >= 85) ? 1 : (soc >= 70) ? 2 :
                       (soc >= 55) ? 3 : (soc >= 40) ? 4 : (soc >= 25) ? 5 : 6;
 
-          id(g_batt_anim_step)  = start;
-          id(g_batt_anim_state) = new_state;
+          // Only reset the animation step on a state transition — repeated sensor
+          // updates with the same state would otherwise restart the cycle every
+          // time and the animation would never complete a full loop.
+          if (new_state != id(g_batt_anim_state)) {
+            id(g_batt_anim_step)  = start;
+            id(g_batt_anim_state) = new_state;
+          }
 
           if (new_state == 0) {
             static const char* const GLYPHS[] = {
