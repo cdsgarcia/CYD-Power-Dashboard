@@ -212,6 +212,10 @@ globals:
     type: float
     restore_value: false
     initial_value: '0.5'
+  - id: g_doorbell_last_state  # last HA state seen; empty = not yet received (skip first delivery)
+    type: std::string
+    restore_value: false
+    initial_value: '""'
 
 script:
   # ── Battery Power/Time Slot Display (DC page row 3) ──────────
@@ -1534,6 +1538,17 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
+            // Skip the initial state delivery on boot/HA-reconnect.
+            // input_button state is a timestamp string; first delivery is the
+            // last-pressed time (or unavailable), not a live press.
+            std::string cur = x;
+            if (id(g_doorbell_last_state).empty()) {
+              id(g_doorbell_last_state) = cur;
+              ESP_LOGD("doorbell", "Initial state '%s' — skipped (boot/reconnect)", cur.c_str());
+              return;
+            }
+            if (cur == id(g_doorbell_last_state)) return;  // duplicate delivery, ignore
+            id(g_doorbell_last_state) = cur;
             if (!id(doorbell_enabled).state) return;
             if (id(g_doorbell_active)) return;  // ignore while alert is showing
             if (!id(g_lvgl_ready)) return;

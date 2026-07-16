@@ -38,6 +38,7 @@ Full-screen alert triggered by an HA `input_button` entity:
 - Background flashes random colors every 250 ms
 - Max brightness during alert; previous brightness restored on dismiss
 - Screen rotation paused for the full alert duration
+- First state delivery on boot or HA reconnect is silently ignored — only genuine new button presses trigger the alert
 
 ---
 
@@ -150,6 +151,7 @@ esphome config cyd-78d27c.yaml
 - All Philippine Time (PHT, UTC+8) calculations use `timestamp + (8×3600)` + `gmtime_r` — no TZ environment variable dependency.
 - If all three screen-enable switches are turned OFF, the clock screen is always shown as a fallback.
 - The doorbell alert ignores subsequent presses while already active; it dismisses automatically after the configured duration.
+- On ESP32 boot or HA server restart, the `input_button` entity sends its last-pressed timestamp as the initial state sync. This is silently absorbed by tracking the last seen value in `g_doorbell_last_state` — the alert only fires when the value actually changes after the first delivery.
 
 ---
 
