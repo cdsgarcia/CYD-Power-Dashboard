@@ -1538,13 +1538,24 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
-            // Skip the initial state delivery on boot/HA-reconnect.
-            // input_button state is a timestamp string; first delivery is the
-            // last-pressed time (or unavailable), not a live press.
+            // On boot / HA-reconnect HA sends two deliveries:
+            //   1. "unavailable"  (entity briefly offline)
+            //   2. last-pressed timestamp  (entity restored)
+            // Both must be absorbed; only a subsequent NEW timestamp is a real press.
+            // Rule: if the previous stored state was empty or "unavailable", treat
+            // the incoming value as the settled baseline — store it and skip.
             std::string cur = x;
-            if (id(g_doorbell_last_state).empty()) {
+            bool prev_unready = id(g_doorbell_last_state).empty()
+                             || id(g_doorbell_last_state) == "unavailable";
+            if (cur == "unavailable") {
+              // Entity going offline — reset so next real state is treated as baseline
               id(g_doorbell_last_state) = cur;
-              ESP_LOGD("doorbell", "Initial state '%s' — skipped (boot/reconnect)", cur.c_str());
+              ESP_LOGD("doorbell", "State unavailable — reset baseline");
+              return;
+            }
+            if (prev_unready) {
+              id(g_doorbell_last_state) = cur;
+              ESP_LOGD("doorbell", "Baseline state '%s' — skipped (boot/reconnect)", cur.c_str());
               return;
             }
             if (cur == id(g_doorbell_last_state)) return;  // duplicate delivery, ignore
