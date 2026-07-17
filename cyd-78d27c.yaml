@@ -49,6 +49,26 @@ substitutions:
   batt_color_blue:   "50"   # ≥ this → 🔵 Blue
   batt_color_yellow: "25"   # ≥ this → 🟡 Yellow  (below → 🟠 Orange)
   # ────────────────────────────────────────────────────────────
+  #  HOME APPARENT POWER color thresholds (VA)
+  home_color_green:  "1000"   # < this → 🟢 Green
+  home_color_blue:   "2000"   # < this → 🔵 Blue
+  home_color_yellow: "3000"   # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
+  # ────────────────────────────────────────────────────────────
+  #  LOAD SLOT color thresholds (W) — each load has independent thresholds
+  #  ≤ 0 W always → 🟡 Yellow (idle/no data)
+  # Load 2 — default: A/C 1st Floor
+  load2_color_green:  "700"   # < this → 🟢 Green
+  load2_color_blue:   "1000"  # < this → 🔵 Blue
+  load2_color_yellow: "1200"  # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
+  # Load 3 — default: A/C 2nd Floor
+  load3_color_green:  "700"
+  load3_color_blue:   "1000"
+  load3_color_yellow: "1200"
+  # Load 1 — default: Ecoflow River 3
+  load1_color_green:  "700"
+  load1_color_blue:   "1000"
+  load1_color_yellow: "1200"
+  # ────────────────────────────────────────────────────────────
 
 esphome:
   name: ${name}
@@ -454,10 +474,13 @@ script:
             id(load2_label).state.c_str() :
             id(load3_label).state.c_str();
           lv_label_set_text(id(lbl_ac_slot), lbl);
-          lv_color_t clr = (v <= 0)   ? lv_color_hex(0xFFFF00) :
-                           (v < 700)  ? lv_color_hex(0x00FF00) :
-                           (v < 1000) ? lv_color_hex(0x0096FF) :
-                           (v < 1200) ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
+          float cg = (id(g_ac_slot_idx) == 0) ? ${load2_color_green}  : ${load3_color_green};
+          float cb = (id(g_ac_slot_idx) == 0) ? ${load2_color_blue}   : ${load3_color_blue};
+          float cy = (id(g_ac_slot_idx) == 0) ? ${load2_color_yellow} : ${load3_color_yellow};
+          lv_color_t clr = (v <= 0)  ? lv_color_hex(0xFFFF00) :
+                           (v < cg)  ? lv_color_hex(0x00FF00) :
+                           (v < cb)  ? lv_color_hex(0x0096FF) :
+                           (v < cy)  ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
           lv_obj_set_style_text_color(id(icon_ac_slot), clr, 0);
           lv_obj_set_style_text_color(id(val_ac_slot), clr, 0);
           char buf[16];
@@ -825,10 +848,10 @@ sensor:
             id(g_load1_val) = x;
             if (id(g_demo_mode)) return;
             if (!id(g_lvgl_ready)) return;
-            lv_color_t clr = (x <= 0)   ? lv_color_hex(0xFFFF00) :
-                             (x < 700)  ? lv_color_hex(0x00FF00) :
-                             (x < 1000) ? lv_color_hex(0x0096FF) :
-                             (x < 1200) ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
+            lv_color_t clr = (x <= 0)                         ? lv_color_hex(0xFFFF00) :
+                             (x < ${load1_color_green})  ? lv_color_hex(0x00FF00) :
+                             (x < ${load1_color_blue})   ? lv_color_hex(0x0096FF) :
+                             (x < ${load1_color_yellow}) ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
             lv_obj_set_style_text_color(id(icon_ecoflow), clr, 0);
             lv_obj_set_style_text_color(id(val_load1), clr, 0);
             char buf[16];
@@ -857,16 +880,16 @@ sensor:
                     if (x >= 10)   return str_sprintf("%.1fVA", x);
                     return str_sprintf("%.2fVA", x);
                   text_color: !lambda |-
-                    if (x < 1000) return lv_color_hex(0x00FF00);
-                    if (x < 2000) return lv_color_hex(0x0096FF);
-                    if (x < 3000) return lv_color_hex(0xFFFF00);
+                    if (x < ${home_color_green}) return lv_color_hex(0x00FF00);
+                    if (x < ${home_color_blue}) return lv_color_hex(0x0096FF);
+                    if (x < ${home_color_yellow}) return lv_color_hex(0xFFFF00);
                     return lv_color_hex(0xFFA500);
               - lvgl.label.update:
                   id: icon_home
                   text_color: !lambda |-
-                    if (x < 1000) return lv_color_hex(0x00FF00);
-                    if (x < 2000) return lv_color_hex(0x0096FF);
-                    if (x < 3000) return lv_color_hex(0xFFFF00);
+                    if (x < ${home_color_green}) return lv_color_hex(0x00FF00);
+                    if (x < ${home_color_blue}) return lv_color_hex(0x0096FF);
+                    if (x < ${home_color_yellow}) return lv_color_hex(0xFFFF00);
                     return lv_color_hex(0xFFA500);
 
   # ── Battery SOC (DC page row 2) ──────────────────────────
