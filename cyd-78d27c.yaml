@@ -69,6 +69,22 @@ substitutions:
   load1_color_blue:   "1000"
   load1_color_yellow: "1200"
   # ────────────────────────────────────────────────────────────
+  #  BATTERY POWER color thresholds (W) — slot 0 center display
+  #  = 0 W → 🩶 Grey 0x888888 (not charging/discharging — matches cloud icon)
+  batt_pwr_green:  "3600"   # ≥ this → 🟢 Green  (fast charge)
+  batt_pwr_blue:   "2000"   # ≥ this → 🔵 Blue   (moderate charge)
+  batt_pwr_yellow: "900"    # > 0 and ≥ this → 🟡 Yellow (slow charge)
+  # ────────────────────────────────────────────────────────────
+  #  BATTERY TIME ESTIMATE color thresholds (hours) — slot 1 center display
+  #  Charging: close to full = green; far from full = orange
+  batt_chg_green_h:  "2"    # < this → 🟢 Green  (almost done)
+  batt_chg_blue_h:   "4"    # < this → 🔵 Blue
+  batt_chg_yellow_h: "6"    # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
+  #  Discharging: close to empty = orange; plenty left = green
+  batt_dis_orange_h: "3"    # < this → 🟠 Orange  (almost empty)
+  batt_dis_yellow_h: "6"    # < this → 🟡 Yellow
+  batt_dis_blue_h:   "9"    # < this → 🔵 Blue    (≥ this → 🟢 Green)
+  # ────────────────────────────────────────────────────────────
 
 esphome:
   name: ${name}
@@ -307,15 +323,15 @@ script:
                 if (h12 == 0) h12 = 12;
                 lv_color_t clr;
                 if (is_charge) {
-                  if      (hours < 2) clr = lv_color_hex(0x00FF00);
-                  else if (hours < 4) clr = lv_color_hex(0x0096FF);
-                  else if (hours < 6) clr = lv_color_hex(0xFFFF00);
-                  else                clr = lv_color_hex(0xFFA500);
+                  if      (hours < ${batt_chg_green_h})  clr = lv_color_hex(0x00FF00);
+                  else if (hours < ${batt_chg_blue_h})   clr = lv_color_hex(0x0096FF);
+                  else if (hours < ${batt_chg_yellow_h}) clr = lv_color_hex(0xFFFF00);
+                  else                                    clr = lv_color_hex(0xFFA500);
                 } else {
-                  if      (hours < 3) clr = lv_color_hex(0xFFA500);
-                  else if (hours < 6) clr = lv_color_hex(0xFFFF00);
-                  else if (hours < 9) clr = lv_color_hex(0x0096FF);
-                  else                clr = lv_color_hex(0x00FF00);
+                  if      (hours < ${batt_dis_orange_h}) clr = lv_color_hex(0xFFA500);
+                  else if (hours < ${batt_dis_yellow_h}) clr = lv_color_hex(0xFFFF00);
+                  else if (hours < ${batt_dis_blue_h})   clr = lv_color_hex(0x0096FF);
+                  else                                    clr = lv_color_hex(0x00FF00);
                 }
                 int limit_pct = (int)(is_charge ? clim : dlim);
                 char action[28];
@@ -364,10 +380,11 @@ script:
           else                              snprintf(buf, sizeof(buf), "%.2fW", v);
           lv_label_set_text(id(val_battery_power), buf);
           lv_color_t clr;
-          if      (v >= 2500) clr = lv_color_hex(0x00FF00);
-          else if (v >= 500)  clr = lv_color_hex(0x0096FF);
-          else if (v >= 0)    clr = lv_color_hex(0xFFFF00);
-          else                clr = lv_color_hex(0xFFA500);
+          if      (v >= ${batt_pwr_green})  clr = lv_color_hex(0x00FF00);  // fast charge
+          else if (v >= ${batt_pwr_blue})   clr = lv_color_hex(0x0096FF);  // moderate charge
+          else if (v > 0)                   clr = lv_color_hex(0xFFFF00);  // slow / trickle charge
+          else if (v == 0.0f)               clr = lv_color_hex(0x888888);  // not charging/discharging — grey
+          else                              clr = lv_color_hex(0xFFA500);  // discharging (any rate)
           lv_obj_set_style_text_color(id(val_battery_power), clr, 0);
           if (_do_pub) {
             float _soc  = id(g_batt_soc_val);
