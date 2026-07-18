@@ -2,6 +2,9 @@
 
 An ESPHome LVGL dashboard for the **Cheap Yellow Display (CYD)** ESP32 with ILI9341 touchscreen (240×320, displayed in landscape via 270° rotation). Designed for real-time solar/battery/AC power monitoring with Home Assistant.
 
+> 📖 **Full documentation** (configuration reference, color thresholds, HA controls, troubleshooting) is shared with the companion CYD-E713B0 project:
+> [github.com/cdsgarcia/CYD-Power-Flow-Dashboard/wiki](https://github.com/cdsgarcia/CYD-Power-Flow-Dashboard/wiki)
+
 ---
 
 ## Screens
