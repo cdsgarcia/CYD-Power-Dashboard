@@ -41,13 +41,14 @@ Three vertically-stacked rows (320×80 each):
 |-----|---------|
 | 1 | **Apparent Power** — home icon + VA/kVA value |
 | 2 | **Ecoflow / Load 1** — fixed, always shown |
-| 3 | **A/C 1F ↔ A/C 2F** *(cycling)* — skips loads below configurable watt threshold |
+| 3 | **A/C 1F ↔ A/C 3F** *(cycling)* — skips loads below configurable watt threshold |
 
 ### Doorbell Overlay
 Full-screen alert triggered by an HA `input_button` entity:
 - **"DOOR" / "BELL"** in large white text
 - Background flashes random colors every 250 ms
-- Max brightness during alert; previous brightness restored on dismiss
+- **Back RGB LED** mirrors the same color as the display at max brightness
+- Max display brightness during alert; previous brightness restored on dismiss
 - Screen rotation paused for the full alert duration
 - First state delivery on boot or HA reconnect is silently ignored — only genuine new button presses trigger the alert
 
@@ -79,6 +80,7 @@ All controls are exposed as HA entities under the device.
 | `switch.screen_dc_enable` | Include DC page in rotation | ON |
 | `switch.screen_ac_enable` | Include AC page in rotation | ON |
 | `switch.doorbell_enabled` | Enable doorbell overlay alert | ON |
+| `switch.doorbell_led_enabled` | Enable back RGB LED flash during doorbell | ON |
 | `switch.layout_preview` | Freeze display with max-width test values for alignment | OFF |
 | `switch.batt_log_enabled` | Verbose battery logging to serial | OFF |
 | `switch.solar_log_enabled` | Verbose solar logging to serial | OFF |
@@ -139,6 +141,7 @@ Toggle OFF to restore live sensor data.
 | Display rotation | 270° (landscape 320×240) |
 | Backlight | LEDC PWM on GPIO21 |
 | SPI pins | CLK=GPIO14, MOSI=GPIO13, MISO=GPIO12, CS=GPIO15, DC=GPIO2 |
+| RGB LED (back, common anode) | R=GPIO4, G=GPIO16, B=GPIO17 (LEDC, active LOW) |
 
 ---
 
