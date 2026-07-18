@@ -73,7 +73,7 @@ All controls are exposed as HA entities under the device.
 | `number.load3_threshold` | Min watts for A/C 2F slot to show | 10 W |
 | `number.battery_capacity_ah` | Battery bank capacity | 300 Ah |
 | `number.batt_time_threshold_hrs` | Max hours ahead to show time estimate | 18 h |
-| `number.doorbell_duration_secs` | Doorbell alert display duration | 5 s |
+| `number.doorbell_duration_secs` | Doorbell alert display duration | 10 s |
 
 ### Switches
 | Entity | Description | Default |
@@ -87,6 +87,7 @@ All controls are exposed as HA entities under the device.
 | `switch.layout_preview` | Freeze display with max-width test values for alignment | OFF |
 | `switch.batt_log_enabled` | Verbose battery logging to serial | OFF |
 | `switch.solar_log_enabled` | Verbose solar logging to serial | OFF |
+| `switch.daily_restart_enabled` | Enable daily restart at configured hour | **OFF** |
 
 ### Select
 | Entity | Options |

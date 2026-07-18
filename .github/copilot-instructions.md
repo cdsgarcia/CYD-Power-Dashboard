@@ -142,6 +142,17 @@ If all three screen-enable switches are OFF, `g_screen_idx` is forced to 0 (cloc
 
 ---
 
+## Daily Restart HA Controls
+
+| Entity | ID | Range / Type | Default |
+|--------|----|-------------|---------|
+| Daily Restart Hour | `daily_restart_hour` | 0–23 hr | 3 |
+| Daily Restart Enabled | `daily_restart_enabled` | switch | **OFF** |
+
+Guard: `if (!id(daily_restart_enabled).state) return;` — first line of the `on_time` lambda. Fires top of every hour; checks PHT hour via `gmtime_r`.
+
+---
+
 ## Substitutions (color thresholds — edit here, not inline)
 
 | Group | Substitutions | Defaults |
