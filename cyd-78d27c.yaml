@@ -774,6 +774,7 @@ time:
         minutes: 0
         then:
           - lambda: |-
+              if (!id(daily_restart_enabled).state) return;
               auto now = id(ha_time).now();
               if (!now.is_valid()) return;
               time_t pht = now.timestamp + (8 * 3600);
@@ -1494,6 +1495,15 @@ switch:
     icon: "mdi:led-on"
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+
+  # ── Daily restart enable ───────────────────────────────────────
+  - platform: template
+    name: "Daily Restart Enabled"
+    id: daily_restart_enabled
+    entity_category: config
+    icon: "mdi:restart-alert"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
 
   # ── Screen enable toggles ──────────────────────────────────────
   # Turn a screen OFF to skip it during auto-rotation.
