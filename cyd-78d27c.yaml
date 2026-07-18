@@ -1033,6 +1033,8 @@ sensor:
 
 # ── Hardware ──────────────────────────────────────────────────
 # Display SPI: GPIO14(CLK) / GPIO13(MOSI) / GPIO12(MISO) / GPIO15(CS) / GPIO2(DC)
+# Backlight:   GPIO21 (LEDC)
+# RGB LED:     GPIO4(R) / GPIO16(G) / GPIO17(B) — common anode, active LOW
 spi:
   - id: tft
     clk_pin: GPIO14
@@ -1043,6 +1045,20 @@ output:
   - platform: ledc
     pin: GPIO21
     id: backlight_output
+
+  # RGB LED (common anode — active LOW): GPIO4=R  GPIO16=G  GPIO17=B
+  - platform: ledc
+    pin: GPIO4
+    id: led_red_output
+    inverted: true
+  - platform: ledc
+    pin: GPIO16
+    id: led_green_output
+    inverted: true
+  - platform: ledc
+    pin: GPIO17
+    id: led_blue_output
+    inverted: true
 
 light:
   - platform: monochromatic
@@ -1238,14 +1254,22 @@ interval:
               0xFF0000, 0xFF8800, 0xFFFF00, 0x00FF00,
               0x0088FF, 0x8800FF, 0xFF00FF, 0xFFFFFF
             };
-            lv_obj_set_style_bg_color(id(doorbell_page)->obj,
-              lv_color_hex(DB_COLORS[esp_random() % 8]), 0);
+            uint32_t db_col = DB_COLORS[esp_random() % 8];
+            lv_obj_set_style_bg_color(id(doorbell_page)->obj, lv_color_hex(db_col), 0);
             lv_obj_invalidate(id(doorbell_page)->obj);
+            // Mirror same color on the back RGB LED at max brightness
+            id(led_red_output).set_level(  ((db_col >> 16) & 0xFF) / 255.0f);
+            id(led_green_output).set_level(((db_col >>  8) & 0xFF) / 255.0f);
+            id(led_blue_output).set_level( ( db_col        & 0xFF) / 255.0f);
             if (--id(g_doorbell_ticks) <= 0) {
               id(g_doorbell_active) = false;
               ESP_LOGW("doorbell", "Doorbell alert dismissed — restoring brightness to %.0f%%",
                 id(g_saved_brightness) * 100.0f);
-              // Restore brightness to saved level
+              // Turn off RGB LED
+              id(led_red_output).set_level(0.0f);
+              id(led_green_output).set_level(0.0f);
+              id(led_blue_output).set_level(0.0f);
+              // Restore backlight to saved level
               auto call = id(backlight).make_call();
               call.set_brightness(id(g_saved_brightness));
               call.perform();
@@ -1637,6 +1661,10 @@ text_sensor:
             auto call = id(backlight).make_call();
             call.set_brightness(1.0f);
             call.perform();
+            // Turn on RGB LED — starts red; 250ms interval takes over immediately
+            id(led_red_output).set_level(1.0f);
+            id(led_green_output).set_level(0.0f);
+            id(led_blue_output).set_level(0.0f);
             lv_scr_load_anim(id(doorbell_page)->obj, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
   - platform: template
     name: "Battery Full At Time"
