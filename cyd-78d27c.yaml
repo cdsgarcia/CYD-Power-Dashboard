@@ -4,7 +4,7 @@
 # 3-Screen rotating dashboard (landscape 320×240 via LVGL 270° rotation):
 #   Screen 0 — Analog Clock          (full-screen, no digital time)
 #   Screen 1 — DC Page               (PV Power / Battery SOC / Battery Power+Time)
-#   Screen 2 — AC Page               (Apparent Power / Ecoflow / A/C 1F↔2F cycling)
+#   Screen 2 — AC Page               (Apparent Power / Ecoflow / A/C 1F↔3F cycling)
 #
 # Overlay alert:
 #   Doorbell — full-screen flashing alert ("DOOR"/"BELL") triggered by HA button entity.
@@ -55,25 +55,24 @@ substitutions:
   home_color_yellow: "3000"   # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
   # ────────────────────────────────────────────────────────────
   #  LOAD SLOT color thresholds (W) — each load has independent thresholds
-  #  ≤ 0 W always → 🟡 Yellow (idle/no data)
   # Load 2 — default: A/C 1st Floor
-  load2_color_green:  "700"   # < this → 🟢 Green
-  load2_color_blue:   "1000"  # < this → 🔵 Blue
-  load2_color_yellow: "1200"  # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
-  # Load 3 — default: A/C 2nd Floor
-  load3_color_green:  "700"
-  load3_color_blue:   "1000"
-  load3_color_yellow: "1200"
+  load2_color_green:  "600"   # < this → 🟢 Green
+  load2_color_blue:   "740"   # < this → 🔵 Blue
+  load2_color_yellow: "900"   # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
+  # Load 3 — default: A/C 3rd Floor
+  load3_color_green:  "80"
+  load3_color_blue:   "900"
+  load3_color_yellow: "1000"
   # Load 1 — default: Ecoflow River 3
-  load1_color_green:  "700"
-  load1_color_blue:   "1000"
-  load1_color_yellow: "1200"
+  load1_color_green:  "140"
+  load1_color_blue:   "200"
+  load1_color_yellow: "400"
   # ────────────────────────────────────────────────────────────
   #  BATTERY POWER color thresholds (W) — slot 0 center display
   #  = 0 W → 🩶 Grey 0x888888 (not charging/discharging — matches cloud icon)
   batt_pwr_green:  "3600"   # ≥ this → 🟢 Green  (fast charge)
-  batt_pwr_blue:   "2000"   # ≥ this → 🔵 Blue   (moderate charge)
-  batt_pwr_yellow: "900"    # > 0 and ≥ this → 🟡 Yellow (slow charge)
+  batt_pwr_blue:   "900"    # ≥ this → 🔵 Blue   (moderate charge)
+  #  > 0 and < batt_pwr_blue → 🟡 Yellow (slow / trickle charge)
   # ────────────────────────────────────────────────────────────
   #  BATTERY TIME ESTIMATE color thresholds (hours) — slot 1 center display
   #  Charging: close to full = green; far from full = orange
@@ -84,6 +83,11 @@ substitutions:
   batt_dis_orange_h: "3"    # < this → 🟠 Orange  (almost empty)
   batt_dis_yellow_h: "6"    # < this → 🟡 Yellow
   batt_dis_blue_h:   "9"    # < this → 🔵 Blue    (≥ this → 🟢 Green)
+  # ────────────────────────────────────────────────────────────
+  #  SOLAR POWER color thresholds (W) — val_solar and sensor on_value
+  solar_color_green:  "3600"  # > this → 🟢 Green  (strong production)
+  solar_color_blue:   "2000"  # > this → 🔵 Blue   (moderate)
+  solar_color_yellow: "900"   # > this → 🟡 Yellow (low)  (≤ this → 🟠 Orange)
   # ────────────────────────────────────────────────────────────
 
 esphome:
@@ -145,7 +149,7 @@ captive_portal:
 # Slot cycling timer: g_slot_secs (shared: DC batt slot + AC A/C slot)
 # DC battery slot:    g_batt_slot / g_batt_power_val / g_batt_soc_val /
 #                     g_batt_current_val / g_srne_charge_limit_val / g_srne_discharge_limit_val
-# AC cycling slot:    g_ac_slot_idx / g_load1_val / g_load2_val / g_load3_val
+# AC cycling slot:    g_ac_slot_idx / g_load2_val / g_load3_val
 # Battery icon anim:  g_batt_anim_state / g_batt_anim_step
 # Solar icon anim:    g_solar_val / g_solar_anim_state / g_solar_anim_step
 globals:
@@ -221,7 +225,7 @@ globals:
     initial_value: '0'
 
   # ── AC page: cycling A/C slot ───────────────────────────────
-  - id: g_ac_slot_idx   # 0=A/C 1F (load2)   1=A/C 2F (load3)
+  - id: g_ac_slot_idx   # 0=A/C 1F (load2)   1=A/C 3F (load3)
     type: int
     initial_value: '0'
     restore_value: false
@@ -233,7 +237,7 @@ globals:
     type: float
     restore_value: false
     initial_value: '0'
-  - id: g_load3_val     # cached ${load3_entity} (A/C 2F)
+  - id: g_load3_val     # cached ${load3_entity} (A/C 3F)
     type: float
     restore_value: false
     initial_value: '0'
@@ -479,8 +483,8 @@ script:
           id(g_batt_slot) = next;
           id(update_batt_display).execute();
 
-  # ── AC Page Slot Display (row 3: A/C 1F ↔ A/C 2F) ────────────
-  # Cycling between load2 (A/C 1F) and load3 (A/C 2F).
+  # ── AC Page Slot Display (row 3: A/C 1F ↔ A/C 3F) ────────────
+  # Cycling between load2 (A/C 1F) and load3 (A/C 3F).
   - id: update_ac_slot_display
     then:
       - lambda: |-
@@ -494,8 +498,7 @@ script:
           float cg = (id(g_ac_slot_idx) == 0) ? ${load2_color_green}  : ${load3_color_green};
           float cb = (id(g_ac_slot_idx) == 0) ? ${load2_color_blue}   : ${load3_color_blue};
           float cy = (id(g_ac_slot_idx) == 0) ? ${load2_color_yellow} : ${load3_color_yellow};
-          lv_color_t clr = (v <= 0)  ? lv_color_hex(0xFFFF00) :
-                           (v < cg)  ? lv_color_hex(0x00FF00) :
+          lv_color_t clr = (v < cg)  ? lv_color_hex(0x00FF00) :
                            (v < cb)  ? lv_color_hex(0x0096FF) :
                            (v < cy)  ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
           lv_obj_set_style_text_color(id(icon_ac_slot), clr, 0);
@@ -508,7 +511,7 @@ script:
           lv_label_set_text(id(val_ac_slot), buf);
 
   # ── AC Slot Advance ────────────────────────────────────────────
-  # Skips A/C 1F (load2) or A/C 2F (load3) if power is at or below their threshold.
+  # Skips A/C 1F (load2) or A/C 3F (load3) if power is at or below their threshold.
   # Both slots are skipped only if both are below threshold — never leaves display empty
   # because update_ac_slot_display handles v=0 gracefully (shows "0.00W").
   - id: advance_ac_slot
@@ -613,14 +616,14 @@ script:
               "\ue1a4", "\uebd4", "\uebe2", "\uebdd",
               "\uebe0", "\uebd9", "\uebdc", "\ue19c"
             };
-            static const uint32_t COLORS[] = {
-              0x00FF00, 0x00FF00, 0x0096FF, 0x0096FF,
-              0xFFFF00, 0xFFFF00, 0xFFA500, 0xFFA500
-            };
             int idx = start;
             lv_obj_set_style_opa(id(icon_battery), LV_OPA_COVER, 0);
             lv_label_set_text_static(id(icon_battery), GLYPHS[idx]);
-            lv_obj_set_style_text_color(id(icon_battery), lv_color_hex(COLORS[idx]), 0);
+            float s = id(g_batt_soc_val);
+            uint32_t c = (s >= ${batt_color_green})  ? 0x00FF00 :
+                         (s >= ${batt_color_blue})   ? 0x0096FF :
+                         (s >= ${batt_color_yellow}) ? 0xFFFF00 : 0xFFA500;
+            lv_obj_set_style_text_color(id(icon_battery), lv_color_hex(c), 0);
           }
 
 # ── Buttons ───────────────────────────────────────────────────
@@ -828,9 +831,9 @@ sensor:
                     if (x >= 10)   return str_sprintf("%.1fW", x);
                     return str_sprintf("%.2fW", x);
                   text_color: !lambda |-
-                    if (x > 3600) return lv_color_hex(0x00FF00);
-                    if (x > 2000) return lv_color_hex(0x0096FF);
-                    if (x > 900)  return lv_color_hex(0xFFFF00);
+                    if (x > ${solar_color_green})  return lv_color_hex(0x00FF00);
+                    if (x > ${solar_color_blue})   return lv_color_hex(0x0096FF);
+                    if (x > ${solar_color_yellow}) return lv_color_hex(0xFFFF00);
                     return lv_color_hex(0xFFA500);
 
   # ── A/C 1F (Load 2 — AC page slot 0) ─────────────────────
@@ -844,7 +847,7 @@ sensor:
             if (id(g_ac_slot_idx) == 0)
               id(update_ac_slot_display).execute();
 
-  # ── A/C 2F (Load 3 — AC page slot 1) ─────────────────────
+  # ── A/C 3F (Load 3 — AC page slot 1) ─────────────────────
   - platform: homeassistant
     id: ha_load3
     entity_id: ${load3_entity}
@@ -863,10 +866,9 @@ sensor:
       then:
         - lambda: |-
             id(g_load1_val) = x;
-            if (id(g_demo_mode)) return;
             if (!id(g_lvgl_ready)) return;
-            lv_color_t clr = (x <= 0)                         ? lv_color_hex(0xFFFF00) :
-                             (x < ${load1_color_green})  ? lv_color_hex(0x00FF00) :
+            if (id(g_demo_mode)) return;
+            lv_color_t clr = (x < ${load1_color_green})  ? lv_color_hex(0x00FF00) :
                              (x < ${load1_color_blue})   ? lv_color_hex(0x0096FF) :
                              (x < ${load1_color_yellow}) ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
             lv_obj_set_style_text_color(id(icon_ecoflow), clr, 0);
@@ -1682,7 +1684,7 @@ text:
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: "A/C 2nd Floor"
+    initial_value: "A/C 3rd Floor"
     mode: text
     max_length: 16
     on_value:
@@ -1977,7 +1979,7 @@ lvgl:
                   y: 7
 
         # ── Row 3: Battery Power / Time estimate (bottom, y=160–240) ─
-        # Container has x=+31 offset (aligns content under val_battery above; no icon in this row).
+        # Container has x=+30 offset (aligns content under val_battery above; no icon in this row).
         # Title and value both centered within container — content changes with batt_slot cycling.
         - obj:
             width: 320
@@ -2009,7 +2011,7 @@ lvgl:
     # Screen 2 — AC Page (3 vertical rows, 320×80 each)
     #   Row 1: Apparent Power
     #   Row 2: Ecoflow / Load 1 (fixed)
-    #   Row 3: A/C 1F ↔ A/C 2F (cycling)
+    #   Row 3: A/C 1F ↔ A/C 3F (cycling)
     # ════════════════════════════════════════════════════════════
     - id: ac_page
       bg_color: 0x000000
@@ -2124,7 +2126,7 @@ lvgl:
                   x: 35
                   y: 7
 
-        # ── Row 3: A/C 1F ↔ A/C 2F cycling (bottom, y=160–240)
+        # ── Row 3: A/C 1F ↔ A/C 3F cycling (bottom, y=160–240)
         - obj:
             width: 320
             height: 80
