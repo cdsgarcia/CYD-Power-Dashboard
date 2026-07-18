@@ -1,4 +1,187 @@
-# Copilot Instructions — CYD Power Dashboard
+# Copilot Instructions — CYD Power Dashboard (78D27C)
+
+## Commands
+
+```bash
+python -m esphome config  cyd-78d27c.yaml   # validate (fast)
+python -m esphome compile cyd-78d27c.yaml   # full compile check
+python -m esphome run     cyd-78d27c.yaml   # build + flash (USB)
+python -m esphome upload  cyd-78d27c.yaml   # OTA flash
+python -m esphome logs    cyd-78d27c.yaml   # live serial log
+```
+
+Use `python -m esphome` — bare `esphome` may not be on PATH on Windows.
+
+---
+
+## Hardware
+
+| Function | Pins |
+|----------|------|
+| TFT SPI (display) | CLK=GPIO14, MOSI=GPIO13, MISO=GPIO12, CS=GPIO15, DC=GPIO2 |
+| Backlight (LEDC) | GPIO21 |
+| RGB LED back (LEDC, common anode — active LOW) | R=GPIO4, G=GPIO16, B=GPIO17 |
+
+---
+
+## Architecture
+
+Single YAML (`cyd-78d27c.yaml`) targeting an ESP32 with ILI9341 240×320 display rendered landscape via LVGL 270° rotation (effective 320×240).
+
+### Pages
+
+| Index | LVGL Page ID | Content |
+|-------|-------------|---------|
+| 0 | `clock_page` | Full-screen analog clock — 3 LVGL scales |
+| 1 | `dc_page` | PV Power / Battery SOC / Battery Power+Time cycling |
+| 2 | `ac_page` | Apparent Power / Ecoflow / A/C 1F↔3F cycling |
+| — | `doorbell_page` | Overlay alert — not in rotation, HA-triggered |
+
+Screens 1 & 2 use three vertically-stacked rows of 320×80 px each.
+
+### Intervals
+
+**1 s** — screen rotation + slot cycling:
+- Decrements `g_screen_secs`; on expiry calls `lv_scr_load_anim`. Skipped entirely while `g_doorbell_active == true`.
+- Decrements `g_slot_secs`; on expiry advances both the DC battery slot and AC A/C slot.
+
+**250 ms** — animations + doorbell:
+- Drives battery icon animation (states 0–3) and solar icon animation (states 0–2).
+- Handles doorbell flash: picks random color from `DB_COLORS[]`, sets both the display background and RGB LED to the same color. Decrements `g_doorbell_ticks`; on zero dismisses the alert, turns off LED, restores backlight.
+- **No demo-mode guard** — animations always run even in layout preview mode.
+
+### Sensor → Display Flow
+
+Each HA sensor `on_value` lambda:
+1. Caches value into matching `g_*_val` global.
+2. Checks `g_lvgl_ready` (first), `g_demo_mode` (second — where applicable), then updates display.
+
+---
+
+## Key Conventions
+
+### Guard Order (critical)
+```cpp
+if (!id(g_lvgl_ready)) return;   // ALWAYS first
+if (id(g_demo_mode)) return;     // second, only where applicable
+```
+Never reverse this order.
+
+### PHT Time
+Always use raw UTC epoch + 8 h offset — never `localtime()` or TZ env var:
+```cpp
+time_t pht = now.timestamp + (8 * 3600);
+struct tm t;
+gmtime_r(&pht, &t);
+```
+
+### Value + Unit Formatting
+No space between value and unit:
+```cpp
+snprintf(buf, sizeof(buf), "%.2fkW", val);  // ✓
+snprintf(buf, sizeof(buf), "%.2f kW", val); // ✗
+```
+
+### Font Glyph Sets
+Adding a character not in a font's `glyphs` list causes a crash or garbled render.
+
+| Font ID | Size | Glyph set |
+|---------|------|-----------|
+| `value_font` | 65 | `"0123456789.:-AMPWkV%"` |
+| `label_font` | 12 | alphanumerics + `. % / + -` |
+| `clock_num_font` | 30 | `"12369"` |
+| `doorbell_font` | 100 | `"BDELOR"` (covers "DOOR" + "BELL") |
+
+### LVGL Clock Hands
+Use `lvgl.indicator.update` (ESPHome native). Raw `lv_meter_set_indicator_value()` is not in lambda scope → compile error.
+
+Value mapping (all 0–60 scale):
+- Hour = `(tm_hour % 12) * 5 + tm_min / 12`
+- Minute = `tm_min` / Second = `tm_sec`
+- Tail (counterweight) = `(hand_value + 30) % 60`
+
+### LVGL Scale Rules
+- All `scales:` items at the same indent level — never nest.
+- Minimum `count: 2` (ESPHome rejects `count: 1`).
+- Use `length:` not the deprecated `r_mod`.
+- `styles:` on indicators accepts string style IDs only — no inline `part:/bg_color:` dicts.
+
+### Demo / Layout Preview Mode
+`switch.layout_preview` sets `g_demo_mode = true` and freezes all labels. The 250 ms animation interval has no demo guard — animations must keep running. Force `bstart = 3` in demo mode (at 100% SOC `bstart = 0` would stall the animation).
+
+### Doorbell Overlay
+- Triggered by `text_sensor` watching `${doorbell_entity}` — state changes to a timestamp on each press.
+- Activation: saves backlight brightness → sets backlight to 100% → sets RGB LED to red → loads `doorbell_page`.
+- 250 ms tick: picks random color from `DB_COLORS[]` (8 colors — all have at least one channel at 0xFF for maximum brightness), applies to both display background and RGB LED simultaneously.
+- Dismiss (countdown reaches 0): turns off RGB LED (unconditional) → restores backlight → returns to current rotation screen.
+- Subsequent presses while active are ignored.
+- `doorbell_led_enabled` switch (HA, default ON) — disables RGB LED without affecting the display alert.
+
+### DC Page Row 2 (intentional)
+Battery icon container uses `height: 240` — the icon backdrop intentionally spans rows 2 and 3. Do not "fix" this to 80.
+
+### Screen Enable Fallback
+If all three screen-enable switches are OFF, `g_screen_idx` is forced to 0 (clock always shows as fallback).
+
+---
+
+## Globals Reference
+
+| ID | Purpose |
+|----|---------|
+| `g_lvgl_ready` | Gate flag — set `true` in `on_boot -10`; all LVGL lambdas check first |
+| `g_demo_mode` | Layout preview flag |
+| `g_screen_idx` / `g_screen_secs` | Screen rotation state |
+| `g_slot_secs` | Shared slot countdown (DC batt slot + AC A/C slot) |
+| `g_batt_slot` / `g_batt_*_val` | Battery slot and value caches |
+| `g_batt_anim_state` / `g_batt_anim_step` | Battery icon animation |
+| `g_solar_val` / `g_solar_anim_state` / `g_solar_anim_step` | Solar icon animation |
+| `g_ac_slot_idx` | AC slot: 0=A/C 1F (load2), 1=A/C 3F (load3) |
+| `g_load1_val` / `g_load2_val` / `g_load3_val` | Load value caches |
+| `g_home_val` | Apparent power cache |
+| `g_doorbell_active` / `g_doorbell_ticks` / `g_doorbell_last_state` | Doorbell state |
+| `g_saved_brightness` | Backlight level saved before doorbell, restored after |
+
+---
+
+## Substitutions (edit here, never inline)
+
+All entity IDs, device name, and color/threshold values live in `substitutions:` at the top.
+
+| Group | Substitutions | Defaults |
+|-------|--------------|----------|
+| Solar Power (W) | `solar_color_green/blue/yellow` | `3600` / `2000` / `900` |
+| Home Apparent Power (VA) | `home_color_green/blue/yellow` | `1000` / `2000` / `3000` |
+| Load 1 Ecoflow (W) | `load1_color_green/blue/yellow` | `140` / `200` / `400` |
+| Load 2 A/C 1F (W) | `load2_color_green/blue/yellow` | `600` / `740` / `900` |
+| Load 3 A/C 3F (W) | `load3_color_green/blue/yellow` | `80` / `900` / `1000` |
+| Battery SOC (%) | `batt_color_green/blue/yellow` | `80` / `50` / `25` |
+| Battery glyph (%) | `batt_thresh_full/5bar/4bar/3bar/2bar/1bar/alert` | `98/85/70/55/40/25/10` |
+| Battery Power (W) | `batt_pwr_green/blue` | `3600` / `900` |
+| Battery time — charging (h) | `batt_chg_green_h/blue_h/yellow_h` | `2` / `4` / `6` |
+| Battery time — discharging (h) | `batt_dis_orange_h/yellow_h/blue_h` | `3` / `6` / `9` |
+
+---
+
+## Color Threshold Quick Reference
+
+**Solar Power** (W): > 3600 🟢 / > 2000 🔵 / > 900 🟡 / ≤ 900 🟠
+
+**Home Apparent Power** (VA): < 1000 🟢 / < 2000 🔵 / < 3000 🟡 / ≥ 3000 🟠
+
+**AC Load Slots** (W):
+
+| Load | 🟢 Green | 🔵 Blue | 🟡 Yellow | 🟠 Orange |
+|------|---------|---------|----------|---------|
+| A/C 1F (load2) | < 600 | < 740 | < 900 | ≥ 900 |
+| A/C 3F (load3) | < 80 | < 900 | < 1000 | ≥ 1000 |
+| Ecoflow (load1) | < 140 | < 200 | < 400 | ≥ 400 |
+
+**Battery SOC** (%): ≥ 80 🟢 / ≥ 50 🔵 / ≥ 25 🟡 / < 25 🟠
+`icon_battery` state=0 (static) uses `batt_color_*` substitutions — always matches `val_battery`.
+
+**Battery Power** (W): ≥ 3600 🟢 / ≥ 900 🔵 / > 0 🟡 / = 0 🩶 Grey `0x888888` / < 0 🟠
+
 
 ## Commands
 
