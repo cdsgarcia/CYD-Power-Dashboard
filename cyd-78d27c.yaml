@@ -90,9 +90,9 @@ substitutions:
   batt_dis_blue_h:   "9"    # < this → 🔵 Blue    (≥ this → 🟢 Green)
   # ────────────────────────────────────────────────────────────
   #  SOLAR POWER color thresholds (W) — val_solar and sensor on_value
-  solar_color_green:  "3600"  # > this → 🟢 Green  (strong production)
-  solar_color_blue:   "2000"  # > this → 🔵 Blue   (moderate)
-  solar_color_yellow: "900"   # > this → 🟡 Yellow (low)  (≤ this → 🟠 Orange)
+  solar_color_green:  "3600"  # > this → 🟢 Green  (> 3600 W)
+  solar_color_blue:   "2000"  # > this → 🔵 Blue   (2001–3600 W)
+  solar_color_yellow: "900"   # > this → 🟡 Yellow (used for icon animation threshold; 1–2000 W → Yellow; = 0 W → Grey; < 0 W → Orange)
   # ────────────────────────────────────────────────────────────
 
 esphome:
@@ -892,8 +892,9 @@ sensor:
                   text_color: !lambda |-
                     if (x > ${solar_color_green})  return lv_color_hex(0x00FF00);
                     if (x > ${solar_color_blue})   return lv_color_hex(0x0096FF);
-                    if (x > ${solar_color_yellow}) return lv_color_hex(0xFFFF00);
-                    return lv_color_hex(0xFFA500);
+                    if (x > 0)                     return lv_color_hex(0xFFFF00);  // 0 < x ≤ blue → Yellow
+                    if (x == 0)                    return lv_color_hex(0x888888);  // = 0 → Grey
+                    return lv_color_hex(0xFFA500);  // < 0 → Orange
 
   # ── A/C 1F (Load 2 — AC page slot 0) ─────────────────────
   - platform: homeassistant
