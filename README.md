@@ -43,7 +43,7 @@ Three vertically-stacked rows (320×80 each):
 | Row | Content |
 |-----|---------|
 | 1 | **Apparent Power** — home icon + VA/kVA value |
-| 2 | **Ecoflow / Load 1** — fixed, always shown |
+| 2 | **Ecoflow ↔ Socket 1** *(cycling)* — Ecoflow always shown; Socket 1 shown when above threshold |
 | 3 | **A/C 1F ↔ A/C 3F** *(cycling)* — skips loads below configurable watt threshold |
 
 ### Doorbell Overlay
@@ -66,11 +66,12 @@ All controls are exposed as HA entities under the device.
 |--------|-------------|---------|
 | `number.screen_transition_secs` | Seconds between screen rotations | 10 s |
 | `number.screen_anim_ms` | Transition animation duration | 500 ms |
-| `number.slot_cycle_secs` | Seconds between slot cycling (DC row 3 / AC row 3) | 2 s |
+| `number.slot_cycle_secs` | Seconds between slot cycling (DC row 3 / AC rows 2 & 3) | 2 s |
 | `number.daily_restart_hour` | PHT hour for daily reboot | 3 (3 AM) |
 | `number.display_brightness` | Backlight brightness | 50 % |
 | `number.load2_threshold` | Min watts for A/C 1F slot to show | 3 W |
-| `number.load3_threshold` | Min watts for A/C 2F slot to show | 10 W |
+| `number.load3_threshold` | Min watts for A/C 3F slot to show | 10 W |
+| `number.load4_threshold` | Min watts for Socket 1 slot to show | 10 W |
 | `number.battery_capacity_ah` | Battery bank capacity | 300 Ah |
 | `number.batt_time_threshold_hrs` | Max hours ahead to show time estimate | 18 h |
 | `number.doorbell_duration_secs` | Doorbell alert display duration | 10 s |
@@ -97,9 +98,10 @@ All controls are exposed as HA entities under the device.
 ### Text
 | Entity | Description |
 |--------|-------------|
-| `text.load_1_label` | Display label for Ecoflow / Load 1 row |
-| `text.load_2_label` | Display label for A/C slot 0 |
-| `text.load_3_label` | Display label for A/C slot 1 |
+| `text.load_1_label` | Display label for Ecoflow (Row 2 slot 0) |
+| `text.load_2_label` | Display label for A/C 1F (Row 3 slot 0) |
+| `text.load_3_label` | Display label for A/C 3F (Row 3 slot 1) |
+| `text.load_4_label` | Display label for Socket 1 (Row 2 slot 1) |
 
 ---
 
@@ -113,6 +115,7 @@ substitutions:
   load1_entity:                "sensor.ef_r30241_ac_input_power"
   load2_entity:                "sensor.a_c_1f_power_meter_power"
   load3_entity:                "sensor.a_c_3f_power_meter_power"
+  load4_entity:                "sensor.smart_socket_1_power"
   battery_entity:              "sensor.battery_soc_mean"
   home_entity:                 "sensor.srne_load_l1_apparent_power"
   battery_power_entity:        "sensor.total_battery_power"

@@ -12,7 +12,7 @@
 |-------|-------------|---------|
 | 0 | `clock_page` | Full-screen analog clock — 3 LVGL scales |
 | 1 | `dc_page` | PV Power / Battery SOC / Battery Power+Time cycling |
-| 2 | `ac_page` | Apparent Power / Ecoflow / A/C 1F↔3F cycling |
+| 2 | `ac_page` | Apparent Power / Ecoflow↔Socket 1 cycling (Row 2) / A/C 1F↔3F cycling (Row 3) |
 | — | `doorbell_page` | Full-screen alert overlay — not in rotation, HA-triggered |
 
 Screens 1 & 2: three vertically-stacked rows of 320×80 px each.
@@ -23,7 +23,7 @@ Screens 1 & 2: three vertically-stacked rows of 320×80 px each.
 
 **1 s** — screen rotation + slot cycling:
 - Decrements `g_screen_secs`; on expiry calls `lv_scr_load_anim`. Skipped entirely while `g_doorbell_active == true`.
-- Decrements `g_slot_secs`; on expiry advances both the DC battery slot and AC A/C slot.
+- Decrements `g_slot_secs`; on expiry advances the DC battery slot, AC Row 2 slot (Ecoflow↔Socket 1), and AC Row 3 A/C slot.
 
 **250 ms** — animations + doorbell:
 - Drives battery icon animation (states 0–3) and solar icon animation (states 0–2).
@@ -130,12 +130,13 @@ If all three screen-enable switches are OFF, `g_screen_idx` is forced to 0 (cloc
 | `g_lvgl_ready` | LVGL gate flag — set in `on_boot -10` |
 | `g_demo_mode` | Layout preview flag |
 | `g_screen_idx` / `g_screen_secs` | Screen rotation state |
-| `g_slot_secs` | Shared slot countdown (DC batt slot + AC A/C slot) |
+| `g_slot_secs` | Shared slot countdown (DC batt slot + AC Row 2 slot + AC Row 3 A/C slot) |
 | `g_batt_slot` / `g_batt_*_val` | Battery slot and value caches |
 | `g_batt_anim_state` / `g_batt_anim_step` | Battery icon animation |
 | `g_solar_val` / `g_solar_anim_state` / `g_solar_anim_step` | Solar icon animation |
-| `g_ac_slot_idx` | AC slot: 0=A/C 1F (load2), 1=A/C 3F (load3) |
-| `g_load1_val` / `g_load2_val` / `g_load3_val` | Load value caches |
+| `g_row2_slot_idx` | Row 2 slot: 0=Ecoflow (load1, always shown), 1=Socket 1 (load4, threshold-gated) |
+| `g_ac_slot_idx` | Row 3 AC slot: 0=A/C 1F (load2), 1=A/C 3F (load3) |
+| `g_load1_val` / `g_load2_val` / `g_load3_val` / `g_load4_val` | Load value caches |
 | `g_home_val` | Apparent power cache |
 | `g_doorbell_active` / `g_doorbell_ticks` / `g_doorbell_last_state` | Doorbell state |
 | `g_saved_brightness` | Backlight level saved before doorbell, restored after |
@@ -162,6 +163,7 @@ Guard: `if (!id(daily_restart_enabled).state) return;` — first line of the `on
 | Load 1 Ecoflow (W) | `load1_color_green/blue/yellow` | `140` / `200` / `400` |
 | Load 2 A/C 1F (W) | `load2_color_green/blue/yellow` | `600` / `740` / `900` |
 | Load 3 A/C 3F (W) | `load3_color_green/blue/yellow` | `80` / `900` / `1000` |
+| Load 4 Socket 1 (W) | `load4_color_green/blue/yellow` | `25` / `50` / `100` |
 | Battery SOC (%) | `batt_color_green/blue/yellow` | see substitutions block |
 | Battery glyph (%) | `batt_thresh_full/5bar/4bar/3bar/2bar/1bar/alert` | see substitutions block |
 | Battery Power (W) | `batt_pwr_green/blue` | `3600` / `900` |

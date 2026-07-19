@@ -23,9 +23,10 @@ substitutions:
   friendly_name: CYD 78d27c
   # ── Power-flow sensor entity IDs ─────────────────────────────
   solar_entity:                "sensor.srne_pv_power"
+  load1_entity:                "sensor.ef_r30241_ac_input_power"
   load2_entity:                "sensor.a_c_1f_power_meter_power"
   load3_entity:                "sensor.a_c_3f_power_meter_power"
-  load1_entity:                "sensor.ef_r30241_ac_input_power"
+  load4_entity:                "sensor.smart_socket_1_power"
   battery_entity:              "sensor.battery_soc_mean"
   home_entity:                 "sensor.srne_load_l1_apparent_power"
   battery_power_entity:        "sensor.total_battery_power"
@@ -55,18 +56,22 @@ substitutions:
   home_color_yellow: "3000"   # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
   # ────────────────────────────────────────────────────────────
   #  LOAD SLOT color thresholds (W) — each load has independent thresholds
-  # Load 2 — default: A/C 1st Floor
-  load2_color_green:  "600"   # < this → 🟢 Green
-  load2_color_blue:   "740"   # < this → 🔵 Blue
-  load2_color_yellow: "900"   # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
-  # Load 3 — default: A/C 3rd Floor
+  # Load 1 — default: Ecoflow River 3 (Row 2 slot 0, always shown)
+  load1_color_green:  "140"   # < this → 🟢 Green
+  load1_color_blue:   "200"   # < this → 🔵 Blue
+  load1_color_yellow: "400"   # < this → 🟡 Yellow  (≥ this → 🟠 Orange)
+  # Load 2 — default: A/C 1st Floor (Row 3 slot 0)
+  load2_color_green:  "600"
+  load2_color_blue:   "740"
+  load2_color_yellow: "900"
+  # Load 3 — default: A/C 3rd Floor (Row 3 slot 1)
   load3_color_green:  "80"
   load3_color_blue:   "900"
   load3_color_yellow: "1000"
-  # Load 1 — default: Ecoflow River 3
-  load1_color_green:  "140"
-  load1_color_blue:   "200"
-  load1_color_yellow: "400"
+  # Load 4 — default: Socket 1 (Row 2 slot 1, visibility threshold = 10 W via load4_threshold)
+  load4_color_green:  "25"
+  load4_color_blue:   "50"
+  load4_color_yellow: "100"
   # ────────────────────────────────────────────────────────────
   #  BATTERY POWER color thresholds (W) — slot 0 center display
   #  = 0 W → 🩶 Grey 0x888888 (not charging/discharging — matches cloud icon)
@@ -105,6 +110,7 @@ esphome:
           id(g_screen_secs) = (int)id(screen_transition_secs).state;
           id(g_slot_secs) = (int)id(slot_cycle_secs).state;
           id(update_batt_display).execute();
+          id(update_row2_display).execute();
           id(update_ac_slot_display).execute();
           id(update_batt_icon_state).execute();
           id(update_solar_icon_state).execute();
@@ -146,10 +152,11 @@ captive_portal:
 
 # ── Globals ───────────────────────────────────────────────────
 # Screen cycling:     g_screen_idx / g_screen_secs
-# Slot cycling timer: g_slot_secs (shared: DC batt slot + AC A/C slot)
+# Slot cycling timer: g_slot_secs (shared: DC batt slot + AC Row 2 slot + AC Row 3 A/C slot)
 # DC battery slot:    g_batt_slot / g_batt_power_val / g_batt_soc_val /
 #                     g_batt_current_val / g_srne_charge_limit_val / g_srne_discharge_limit_val
-# AC cycling slot:    g_ac_slot_idx / g_load2_val / g_load3_val
+# AC Row 2 slot:      g_row2_slot_idx / g_load1_val / g_load4_val
+# AC Row 3 A/C slot:  g_ac_slot_idx / g_load2_val / g_load3_val
 # Battery icon anim:  g_batt_anim_state / g_batt_anim_step
 # Solar icon anim:    g_solar_val / g_solar_anim_state / g_solar_anim_step
 globals:
@@ -229,6 +236,10 @@ globals:
     type: int
     initial_value: '0'
     restore_value: false
+  - id: g_row2_slot_idx  # 0=Ecoflow (load1)  1=Socket 1 (load4)
+    type: int
+    initial_value: '0'
+    restore_value: false
   - id: g_load1_val     # cached ${load1_entity} (Ecoflow)
     type: float
     restore_value: false
@@ -238,6 +249,10 @@ globals:
     restore_value: false
     initial_value: '0'
   - id: g_load3_val     # cached ${load3_entity} (A/C 3F)
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: g_load4_val     # cached ${load4_entity} (Socket 1)
     type: float
     restore_value: false
     initial_value: '0'
@@ -483,7 +498,44 @@ script:
           id(g_batt_slot) = next;
           id(update_batt_display).execute();
 
-  # ── AC Page Slot Display (row 3: A/C 1F ↔ A/C 3F) ────────────
+  # ── AC Row 2 Slot Display (Ecoflow ↔ Socket 1) ───────────────
+  # Slot 0: Ecoflow / Load 1 (always shown). Slot 1: Socket 1 / Load 4 (threshold-gated).
+  - id: update_row2_display
+    then:
+      - lambda: |-
+          if (!id(g_lvgl_ready)) return;
+          if (id(g_demo_mode)) return;
+          int si = id(g_row2_slot_idx);
+          float v = (si == 0) ? id(g_load1_val) : id(g_load4_val);
+          lv_label_set_text(id(lbl_load1),
+            (si == 0) ? id(load1_label).state.c_str() : id(load4_label).state.c_str());
+          float cg = (si == 0) ? ${load1_color_green}  : ${load4_color_green};
+          float cb = (si == 0) ? ${load1_color_blue}   : ${load4_color_blue};
+          float cy = (si == 0) ? ${load1_color_yellow} : ${load4_color_yellow};
+          lv_color_t clr = (v < cg)  ? lv_color_hex(0x00FF00) :
+                           (v < cb)  ? lv_color_hex(0x0096FF) :
+                           (v < cy)  ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
+          lv_obj_set_style_text_color(id(icon_ecoflow), clr, 0);
+          lv_obj_set_style_text_color(id(val_load1), clr, 0);
+          char buf[16];
+          if      (v >= 1000) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
+          else if (v >= 100)  snprintf(buf, sizeof(buf), "%.0fW", v);
+          else if (v >= 10)   snprintf(buf, sizeof(buf), "%.1fW", v);
+          else                snprintf(buf, sizeof(buf), "%.2fW", v);
+          lv_label_set_text(id(val_load1), buf);
+
+  # ── AC Row 2 Slot Advance ─────────────────────────────────────
+  # Slot 0 (Ecoflow) always eligible. Slot 1 (Socket 1) skipped if at or below threshold.
+  - id: advance_row2_slot
+    then:
+      - lambda: |-
+          int next = 1 - id(g_row2_slot_idx);  // toggle 0↔1
+          if (next == 1 && id(g_load4_val) <= id(load4_threshold).state)
+            next = 0;  // Socket 1 below threshold — stay on Ecoflow
+          id(g_row2_slot_idx) = next;
+          id(update_row2_display).execute();
+
+  # ── AC Row 3 Slot Display (A/C 1F ↔ A/C 3F) ─────────────────
   # Cycling between load2 (A/C 1F) and load3 (A/C 3F).
   - id: update_ac_slot_display
     then:
@@ -510,10 +562,9 @@ script:
           else                snprintf(buf, sizeof(buf), "%.2fW", v);
           lv_label_set_text(id(val_ac_slot), buf);
 
-  # ── AC Slot Advance ────────────────────────────────────────────
+  # ── AC Row 3 Slot Advance ─────────────────────────────────────
   # Skips A/C 1F (load2) or A/C 3F (load3) if power is at or below their threshold.
-  # Both slots are skipped only if both are below threshold — never leaves display empty
-  # because update_ac_slot_display handles v=0 gracefully (shows "0.00W").
+  # Both below threshold — keep current slot, just refresh display.
   - id: advance_ac_slot
     then:
       - lambda: |-
@@ -859,7 +910,18 @@ sensor:
             if (id(g_ac_slot_idx) == 1)
               id(update_ac_slot_display).execute();
 
-  # ── Ecoflow / Load 1 (AC page row 2 — always shown) ──────
+  # ── Socket 1 (Load 4 — AC page row 2 slot 1) ────────────────
+  - platform: homeassistant
+    id: ha_load4
+    entity_id: ${load4_entity}
+    on_value:
+      then:
+        - lambda: |-
+            id(g_load4_val) = x;
+            if (id(g_row2_slot_idx) == 1)
+              id(update_row2_display).execute();
+
+  # ── Ecoflow / Load 1 (AC page row 2 slot 0) ──────────────────
   - platform: homeassistant
     id: ha_load1
     entity_id: ${load1_entity}
@@ -867,19 +929,8 @@ sensor:
       then:
         - lambda: |-
             id(g_load1_val) = x;
-            if (!id(g_lvgl_ready)) return;
-            if (id(g_demo_mode)) return;
-            lv_color_t clr = (x < ${load1_color_green})  ? lv_color_hex(0x00FF00) :
-                             (x < ${load1_color_blue})   ? lv_color_hex(0x0096FF) :
-                             (x < ${load1_color_yellow}) ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
-            lv_obj_set_style_text_color(id(icon_ecoflow), clr, 0);
-            lv_obj_set_style_text_color(id(val_load1), clr, 0);
-            char buf[16];
-            if      (x >= 1000) snprintf(buf, sizeof(buf), "%.2fkW", x / 1000.0f);
-            else if (x >= 100)  snprintf(buf, sizeof(buf), "%.0fW", x);
-            else if (x >= 10)   snprintf(buf, sizeof(buf), "%.1fW", x);
-            else                snprintf(buf, sizeof(buf), "%.2fW", x);
-            lv_label_set_text(id(val_load1), buf);
+            if (id(g_row2_slot_idx) == 0)
+              id(update_row2_display).execute();
 
   # ── Apparent power / Home load (AC page row 1) ────────────
   - platform: homeassistant
@@ -1090,10 +1141,11 @@ interval:
   - interval: 1s
     then:
       - lambda: |-
-          // ── Shared slot cycling timer (DC batt slot + AC A/C slot) ──
+          // ── Shared slot cycling timer (DC batt slot + AC Row 2 slot + AC Row 3 A/C slot) ──
           if (--id(g_slot_secs) <= 0) {
             id(g_slot_secs) = (int)id(slot_cycle_secs).state;
             id(advance_batt_slot).execute();
+            id(advance_row2_slot).execute();
             id(advance_ac_slot).execute();
           }
           // ── Screen transition countdown ───────────────────────────────
@@ -1394,6 +1446,19 @@ number:
     unit_of_measurement: "W"
 
   - platform: template
+    name: "Load 4 Threshold"
+    id: load4_threshold
+    entity_category: config
+    mode: box
+    min_value: 0
+    max_value: 500
+    step: 1
+    initial_value: 10
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "W"
+
+  - platform: template
     name: "Battery Capacity Ah"
     id: battery_capacity_ah
     entity_category: config
@@ -1573,7 +1638,7 @@ switch:
             lv_label_set_text(id(val_battery_power), "12:00PM");
             // AC page — Row 1: Apparent Power
             lv_label_set_text(id(val_home), "8.88kVA");
-            // AC page — Row 2: Ecoflow / Load 1
+            // AC page — Row 2: Ecoflow / Socket 1 cycling slot
             lv_label_set_text(id(val_load1), "8.88kW");
             // AC page — Row 3: cycling A/C slot
             lv_label_set_text(id(lbl_ac_slot), "A/C 1st Floor");
@@ -1606,15 +1671,8 @@ switch:
             else if (hv >= 10)   snprintf(hb, sizeof(hb), "%.1fVA", hv);
             else                 snprintf(hb, sizeof(hb), "%.2fVA", hv);
             lv_label_set_text(id(val_home), hb);
-            // Restore Load 1 from cached value
-            float l1 = id(g_load1_val);
-            char lb[16];
-            if      (l1 >= 1000) snprintf(lb, sizeof(lb), "%.2fkW", l1 / 1000.0f);
-            else if (l1 >= 100)  snprintf(lb, sizeof(lb), "%.0fW", l1);
-            else if (l1 >= 10)   snprintf(lb, sizeof(lb), "%.1fW", l1);
-            else                 snprintf(lb, sizeof(lb), "%.2fW", l1);
-            lv_label_set_text(id(val_load1), lb);
-            // Restore battery power/time slot and AC slot via display scripts
+            // Restore Row 2 cycling slot (Ecoflow / Socket 1) and Row 3 A/C slot via display scripts
+            id(update_row2_display).execute();
             id(update_batt_display).execute();
             id(update_ac_slot_display).execute();
             id(update_solar_icon_state).execute();
@@ -1710,8 +1768,8 @@ text:
     on_value:
       then:
         - lambda: |-
-            if (!id(g_lvgl_ready)) return;
-            lv_label_set_text(id(lbl_load1), id(load1_label).state.c_str());
+            if (!id(g_lvgl_ready) || id(g_row2_slot_idx) != 0) return;
+            id(update_row2_display).execute();
 
   - platform: template
     name: "Load 2 Label"
@@ -1742,6 +1800,21 @@ text:
         - lambda: |-
             if (!id(g_lvgl_ready) || id(g_ac_slot_idx) != 1) return;
             id(update_ac_slot_display).execute();
+
+  - platform: template
+    name: "Load 4 Label"
+    id: load4_label
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: "Socket 1"
+    mode: text
+    max_length: 16
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(g_lvgl_ready) || id(g_row2_slot_idx) != 1) return;
+            id(update_row2_display).execute();
 
 # ── LVGL UI ───────────────────────────────────────────────────
 # Rotation 270° → canvas is 320×240 landscape.
