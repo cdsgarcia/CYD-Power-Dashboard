@@ -162,7 +162,7 @@ Guard: `if (!id(daily_restart_enabled).state) return;` — first line of the `on
 | Load 1 Ecoflow (W) | `load1_color_green/blue/yellow` | `140` / `200` / `400` |
 | Load 2 A/C 1F (W) | `load2_color_green/blue/yellow` | `600` / `740` / `900` |
 | Load 3 A/C 3F (W) | `load3_color_green/blue/yellow` | `80` / `900` / `1000` |
-| Battery SOC (%) | `batt_color_green/blue/yellow` | `80` / `50` / `25` |
+| Battery SOC (%) | `batt_color_green/blue/yellow` | see substitutions block |
 | Battery glyph (%) | `batt_thresh_full/5bar/4bar/3bar/2bar/1bar/alert` | see substitutions block |
 | Battery Power (W) | `batt_pwr_green/blue` | `3600` / `900` |
 | Battery time charging (h) | `batt_chg_green_h/blue_h/yellow_h` | `2` / `4` / `6` |
