@@ -77,6 +77,7 @@ snprintf(buf, sizeof(buf), "%.2f kW", val); // ✗
 | Font ID | Size | Glyph set |
 |---------|------|-----------|
 | `value_font` | 65 | `"0123456789.:-AMPWkV%"` |
+| `ef_font` | 50 | `"EF"` — Ecoflow text icon (Roboto; switched in via `lv_obj_set_style_text_font`) |
 | `label_font` | 12 | alphanumerics + `. % / + -` |
 | `clock_num_font` | 30 | `"12369"` |
 | `doorbell_font` | 100 | `"BDELOR"` (covers "DOOR" + "BELL") |

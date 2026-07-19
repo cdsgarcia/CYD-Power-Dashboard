@@ -515,6 +515,9 @@ script:
           lv_color_t clr = (v < cg)  ? lv_color_hex(0x00FF00) :
                            (v < cb)  ? lv_color_hex(0x0096FF) :
                            (v < cy)  ? lv_color_hex(0xFFFF00) : lv_color_hex(0xFFA500);
+          // Slot 0 = Ecoflow: "EF" in ef_font (Roboto 50); Slot 1 = Socket 1: plug glyph in icon_font
+          lv_obj_set_style_text_font(id(icon_ecoflow), si == 0 ? id(ef_font) : id(icon_font), 0);
+          lv_label_set_text(id(icon_ecoflow), (si == 0) ? "EF" : "\ue63c");  // EF=Ecoflow, plug=Socket1
           lv_obj_set_style_text_color(id(icon_ecoflow), clr, 0);
           lv_obj_set_style_text_color(id(val_load1), clr, 0);
           char buf[16];
@@ -700,6 +703,10 @@ font:
     id: label_font
     size: 12
     glyphs: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz .%/+-"
+  - file: "gfonts://Roboto"
+    id: ef_font
+    size: 50
+    glyphs: "EF"  # Ecoflow text icon for Row 2 slot 0
 
   - file: "gfonts://Roboto"
     id: clock_num_font
@@ -713,7 +720,7 @@ font:
       "\uec0f",  # solar_power — base solar icon
       "\ueb3b",  # ac_unit (snowflake) — A/C slot icon
       "\ue88a",  # home — Apparent Power row
-      "\ue63c",  # electrical_services — Ecoflow / Load 1
+      "\ue63c",  # electrical_services — Ecoflow / Socket 1 icon
       # ── Solar sun ping-pong glyphs (state 1) ──────────────────
       "\ue3a9",  # brightness_4
       "\ue3aa",  # brightness_5
