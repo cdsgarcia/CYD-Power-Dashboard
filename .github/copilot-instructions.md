@@ -154,6 +154,51 @@ Guard: `if (!id(daily_restart_enabled).state) return;` — first line of the `on
 
 ---
 
+## HA Controls
+
+### Slot Cycling
+
+| Entity | ID | Range | Default |
+|--------|----|-------|---------|
+| Slot Cycle Secs | `slot_cycle_secs` | 1–15 s | 2 — shared timer for Row 2 + Row 3 + Battery |
+| Load 2 Threshold | `load2_threshold` | 0–500 W | 3 |
+| Load 3 Threshold | `load3_threshold` | 0–500 W | 10 |
+| Load 4 Threshold | `load4_threshold` | 0–500 W | 10 |
+
+### Battery Time Estimate
+
+| Entity | ID | Range | Default |
+|--------|----|-------|---------|
+| Battery Capacity Ah | `battery_capacity_ah` | 200–700 Ah, step 5 | 300 |
+| Batt Time Threshold | `batt_time_threshold_hrs` | 1–48 h | 18 |
+| Batt Time Estimate | `batt_time_enabled` | switch | ON |
+
+### HA-Editable Labels (`text:`, max 16 chars)
+
+| ID | Default | Used in |
+|----|---------|---------|
+| `load1_label` | "Ecoflow River 3" | AC Row 2 slot 0 |
+| `load2_label` | "A/C 1st Floor" | AC Row 3 slot 0 |
+| `load3_label` | "A/C 3rd Floor" | AC Row 3 slot 1 |
+| `load4_label` | "Socket 1" | AC Row 2 slot 1 |
+
+---
+
+## Script Reference
+
+| ID | Purpose |
+|----|---------|
+| `update_row2_display` | Refreshes AC Row 2 (Ecoflow↔Socket 1); `g_lvgl_ready` + `g_demo_mode` guards first |
+| `advance_row2_slot` | Toggles `g_row2_slot_idx` 0↔1; stays at 0 if load4 ≤ `load4_threshold` |
+| `update_ac_slot_display` | Refreshes AC Row 3 (A/C 1F↔3F); `g_lvgl_ready` + `g_demo_mode` guards first |
+| `advance_ac_slot` | Tries next AC slot; skips if value ≤ threshold; falls back to current slot if both below |
+| `update_batt_display` | Slot 0: Power W/kW. Slot 1: time estimate or fallback. `g_lvgl_ready` + `g_demo_mode` guards |
+| `advance_batt_slot` | Toggles `g_batt_slot` 0↔1; ineligible/disabled → stays at 0 |
+| `update_batt_icon_state` | Sets `g_batt_anim_state` from SOC + current; restores glyph+color on → static |
+| `update_solar_icon_state` | Sets `g_solar_anim_state` from solar power + PHT hour; toggles `icon_solar`/`icon_solar_moon` visibility |
+
+---
+
 ## Substitutions (color thresholds — edit here, not inline)
 
 | Group | Substitutions | Defaults |
