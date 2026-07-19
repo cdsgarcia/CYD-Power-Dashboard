@@ -204,7 +204,7 @@ Guard: `if (!id(daily_restart_enabled).state) return;` — first line of the `on
 
 | Group | Substitutions | Defaults |
 |-------|--------------|----------|
-| Solar Power (W) | `solar_color_green/blue/yellow` | `3600` / `2000` / `900` — color: > 3600 Green, 2001–3600 Blue, 1–2000 Yellow, 0 Grey, < 0 Orange |
+| Solar Power (W) | `solar_color_green/blue/yellow` | `3600` / `2000` / `900` — color: > 3600 Green, 2001–3600 Blue, 901–2000 Yellow, 1–900 Orange, 0 Grey |
 | Home Apparent Power (VA) | `home_color_green/blue/yellow` | `1000` / `2000` / `3000` |
 | Load 1 Ecoflow (W) | `load1_color_green/blue/yellow` | `140` / `200` / `400` |
 | Load 2 A/C 1F (W) | `load2_color_green/blue/yellow` | `600` / `740` / `900` |
