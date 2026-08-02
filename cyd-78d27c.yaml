@@ -355,7 +355,7 @@ script:
                 int limit_pct = (int)(is_charge ? clim : dlim);
                 char action[28];
                 snprintf(action, sizeof(action), is_charge ? "Charges to %d%% at" : "Empty to %d%% at", limit_pct);
-                char tbuf[48];
+                char tbuf[64];
                 if      (days == 0) snprintf(tbuf, sizeof(tbuf), "%s", action);
                 else if (days == 1) snprintf(tbuf, sizeof(tbuf), "%s - Next Day", action);
                 else                snprintf(tbuf, sizeof(tbuf), "%s - Next %d Days", action, days);
