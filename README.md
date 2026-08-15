@@ -1,6 +1,6 @@
 # CYD Power Dashboard
 
-<a href="https://github.com/cdsgarcia/sunsynk-power-flow-card#support"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="28" width="120"></a>
+<a href="#support"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="28" width="120"></a>
 
 An ESPHome LVGL dashboard for the **Cheap Yellow Display (CYD)** ESP32 with ILI9341 touchscreen (240×320, displayed in landscape via 270° rotation). Designed for real-time solar/battery/AC power monitoring with Home Assistant.
 
