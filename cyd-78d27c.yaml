@@ -393,9 +393,9 @@ script:
           // ── Slot 0 (or slot 1 fallback): Battery Power ─────────────
           lv_label_set_text_static(id(lbl_batt_title), "Battery Power");
           char buf[16];
-          if      (v >= 1000 || v <= -1000) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
-          else if (v >= 100  || v <= -100)  snprintf(buf, sizeof(buf), "%.0fW", v);
-          else if (v >= 10   || v <= -10)   snprintf(buf, sizeof(buf), "%.1fW", v);
+          if      (v >= 999.5f || v <= -999.5f) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
+          else if (v >= 99.95f  || v <= -99.95f)  snprintf(buf, sizeof(buf), "%.0fW", v);
+          else if (v >= 9.995f   || v <= -9.995f)   snprintf(buf, sizeof(buf), "%.1fW", v);
           else                              snprintf(buf, sizeof(buf), "%.2fW", v);
           lv_label_set_text(id(val_battery_power), buf);
           lv_color_t clr;
@@ -521,9 +521,9 @@ script:
           lv_obj_set_style_text_color(id(icon_ecoflow), clr, 0);
           lv_obj_set_style_text_color(id(val_load1), clr, 0);
           char buf[16];
-          if      (v >= 1000) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
-          else if (v >= 100)  snprintf(buf, sizeof(buf), "%.0fW", v);
-          else if (v >= 10)   snprintf(buf, sizeof(buf), "%.1fW", v);
+          if      (v >= 999.5f) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
+          else if (v >= 99.95f)  snprintf(buf, sizeof(buf), "%.0fW", v);
+          else if (v >= 9.995f)   snprintf(buf, sizeof(buf), "%.1fW", v);
           else                snprintf(buf, sizeof(buf), "%.2fW", v);
           lv_label_set_text(id(val_load1), buf);
 
@@ -559,9 +559,9 @@ script:
           lv_obj_set_style_text_color(id(icon_ac_slot), clr, 0);
           lv_obj_set_style_text_color(id(val_ac_slot), clr, 0);
           char buf[16];
-          if      (v >= 1000) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
-          else if (v >= 100)  snprintf(buf, sizeof(buf), "%.0fW", v);
-          else if (v >= 10)   snprintf(buf, sizeof(buf), "%.1fW", v);
+          if      (v >= 999.5f) snprintf(buf, sizeof(buf), "%.2fkW", v / 1000.0f);
+          else if (v >= 99.95f)  snprintf(buf, sizeof(buf), "%.0fW", v);
+          else if (v >= 9.995f)   snprintf(buf, sizeof(buf), "%.1fW", v);
           else                snprintf(buf, sizeof(buf), "%.2fW", v);
           lv_label_set_text(id(val_ac_slot), buf);
 
@@ -885,9 +885,9 @@ sensor:
               - lvgl.label.update:
                   id: val_solar
                   text: !lambda |-
-                    if (x >= 1000) return str_sprintf("%.2fkW", x / 1000.0f);
-                    if (x >= 100)  return str_sprintf("%.0fW", x);
-                    if (x >= 10)   return str_sprintf("%.1fW", x);
+                    if (x >= 999.5f) return str_sprintf("%.2fkW", x / 1000.0f);
+                    if (x >= 99.95f)  return str_sprintf("%.0fW", x);
+                    if (x >= 9.995f)   return str_sprintf("%.1fW", x);
                     return str_sprintf("%.2fW", x);
                   text_color: !lambda |-
                     if (x > ${solar_color_green})  return lv_color_hex(0x00FF00);  // > 3600 W → Green
@@ -954,9 +954,9 @@ sensor:
               - lvgl.label.update:
                   id: val_home
                   text: !lambda |-
-                    if (x >= 1000) return str_sprintf("%.2fkVA", x / 1000.0f);
-                    if (x >= 100)  return str_sprintf("%.0fVA", x);
-                    if (x >= 10)   return str_sprintf("%.1fVA", x);
+                    if (x >= 999.5f) return str_sprintf("%.2fkVA", x / 1000.0f);
+                    if (x >= 99.95f)  return str_sprintf("%.0fVA", x);
+                    if (x >= 9.995f)   return str_sprintf("%.1fVA", x);
                     return str_sprintf("%.2fVA", x);
                   text_color: !lambda |-
                     if (x < ${home_color_green}) return lv_color_hex(0x00FF00);
@@ -1004,8 +1004,8 @@ sensor:
               - lvgl.label.update:
                   id: val_battery
                   text: !lambda |-
-                    if (x >= 100) return str_sprintf("%.0f%%", x);
-                    if (x >= 10)  return str_sprintf("%.1f%%", x);
+                    if (x >= 99.95f) return str_sprintf("%.0f%%", x);
+                    if (x >= 9.995f)  return str_sprintf("%.1f%%", x);
                     return str_sprintf("%.2f%%", x);
                   text_color: !lambda |-
                     if (x >= ${batt_color_green}) return lv_color_hex(0x00FF00);
@@ -1473,7 +1473,7 @@ number:
     min_value: 200
     max_value: 700
     step: 5
-    initial_value: 300
+    initial_value: 624
     restore_value: true
     optimistic: true
     unit_of_measurement: "Ah"
@@ -1658,24 +1658,24 @@ switch:
             // Restore PV Solar from cached value
             float sv = id(g_solar_val);
             char sb[16];
-            if      (sv >= 1000) snprintf(sb, sizeof(sb), "%.2fkW", sv / 1000.0f);
-            else if (sv >= 100)  snprintf(sb, sizeof(sb), "%.0fW", sv);
-            else if (sv >= 10)   snprintf(sb, sizeof(sb), "%.1fW", sv);
+            if      (sv >= 999.5f) snprintf(sb, sizeof(sb), "%.2fkW", sv / 1000.0f);
+            else if (sv >= 99.95f)  snprintf(sb, sizeof(sb), "%.0fW", sv);
+            else if (sv >= 9.995f)   snprintf(sb, sizeof(sb), "%.1fW", sv);
             else                 snprintf(sb, sizeof(sb), "%.2fW", sv);
             lv_label_set_text(id(val_solar), sb);
             // Restore Battery SOC from cached value
             float bs = id(g_batt_soc_val);
             char bb[16];
-            if      (bs >= 100) snprintf(bb, sizeof(bb), "%.0f%%", bs);
-            else if (bs >= 10)  snprintf(bb, sizeof(bb), "%.1f%%", bs);
+            if      (bs >= 99.95f) snprintf(bb, sizeof(bb), "%.0f%%", bs);
+            else if (bs >= 9.995f)  snprintf(bb, sizeof(bb), "%.1f%%", bs);
             else                snprintf(bb, sizeof(bb), "%.2f%%", bs);
             lv_label_set_text(id(val_battery), bb);
             // Restore Apparent Power from cached value
             float hv = id(g_home_val);
             char hb[16];
-            if      (hv >= 1000) snprintf(hb, sizeof(hb), "%.2fkVA", hv / 1000.0f);
-            else if (hv >= 100)  snprintf(hb, sizeof(hb), "%.0fVA", hv);
-            else if (hv >= 10)   snprintf(hb, sizeof(hb), "%.1fVA", hv);
+            if      (hv >= 999.5f) snprintf(hb, sizeof(hb), "%.2fkVA", hv / 1000.0f);
+            else if (hv >= 99.95f)  snprintf(hb, sizeof(hb), "%.0fVA", hv);
+            else if (hv >= 9.995f)   snprintf(hb, sizeof(hb), "%.1fVA", hv);
             else                 snprintf(hb, sizeof(hb), "%.2fVA", hv);
             lv_label_set_text(id(val_home), hb);
             // Restore Row 2 cycling slot (Ecoflow / Socket 1) and Row 3 A/C slot via display scripts

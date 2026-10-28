@@ -70,6 +70,15 @@ snprintf(buf, sizeof(buf), "%.2fkW", val);  // ✓
 snprintf(buf, sizeof(buf), "%.2f kW", val); // ✗
 ```
 
+Branch thresholds must be the **rounding boundaries**, not the round numbers — printf rounds *after* the branch is chosen, so `v >= 1000` renders 999.6 as `1000W`:
+```cpp
+if      (v >= 999.5f) "%.2fkW" (v / 1000)   // not >= 1000
+else if (v >= 99.95f) "%.0fW"               // not >= 100
+else if (v >= 9.995f) "%.1fW"               // not >= 10
+else                  "%.2fW"
+```
+Battery power is signed — mirror each test with `v <= -999.5f` etc. Applies to W, VA and SOC %.
+
 ---
 
 ## Font Glyph Sets
